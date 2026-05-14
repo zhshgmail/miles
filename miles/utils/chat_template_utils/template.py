@@ -25,6 +25,8 @@ from pydantic import TypeAdapter
 from sglang.srt.entrypoints.openai.protocol import Tool
 from transformers.utils.chat_template_utils import render_jinja_template
 
+from miles.utils.chat_template_utils import deepseek_v32
+
 
 def load_hf_chat_template(model_id: str) -> str:
     """Load an original chat template from HuggingFace (cached locally).
@@ -220,7 +222,23 @@ def apply_chat_template(
     Passes ``return_dict=False`` to match SGLang's ``serving_chat.py``,
     ensuring the result is ``str`` (tokenize=False) or ``list[int]``
     (tokenize=True), not a ``BatchEncoding`` or ``dict``.
+
+    DeepSeek V3.2 ships no jinja chat_template; sglang renders V3.2
+    prompts through ``encoding_dsv32`` instead. Delegate to that module
+    when the tokenizer is recognized as V3.2 so TITO append-only
+    tokenization stays byte-aligned with what the runtime serves.
     """
+    if deepseek_v32.is_deepseek_v32_tokenizer(tokenizer):
+        rendered = deepseek_v32.render_messages(
+            messages,
+            add_generation_prompt=add_generation_prompt,
+            tools=tools,
+            **kwargs,
+        )
+        if tokenize:
+            return tokenizer.encode(rendered, add_special_tokens=False)
+        return rendered
+
     messages = _normalize_tool_arguments(messages)
     tool_defs = extract_tool_dicts(tools)
     render_kwargs = dict(add_generation_prompt=add_generation_prompt, **kwargs)
