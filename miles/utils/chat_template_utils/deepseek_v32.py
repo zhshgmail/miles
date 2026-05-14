@@ -14,7 +14,28 @@ import copy
 import json
 from typing import Any
 
+from pydantic import TypeAdapter
+from sglang.srt.entrypoints.openai.protocol import Tool
+
 _GENERATION_PROMPT_SUFFIX = "<｜Assistant｜>"
+
+
+def _canonicalize_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Match sglang's V3.2 tool canonicalization before encoding.
+
+    sglang's ``serving_chat`` runs request tools through
+    ``ChatCompletionRequest`` (which validates them as ``Tool`` pydantic
+    models), then dumps back to ``dict``. That fills in defaults like
+    ``strict: false`` and reorders fields, which the V3.2 encoder
+    serializes verbatim into the ``<functions>`` block — so caller-side
+    dicts must go through the same canonicalization or token IDs drift.
+    """
+    wrapped = [
+        tool if isinstance(tool, dict) and "function" in tool else {"type": "function", "function": tool}
+        for tool in tools
+    ]
+    validated = TypeAdapter(list[Tool]).validate_python(copy.deepcopy(wrapped))
+    return [tool.model_dump() for tool in validated]
 
 
 def is_deepseek_v32_tokenizer(tokenizer: Any) -> bool:
@@ -83,10 +104,7 @@ def render_messages(
     if not rendered_messages or rendered_messages[0].get("role") != "system":
         rendered_messages.insert(0, {"role": "system", "content": ""})
     if tools:
-        rendered_messages[0]["tools"] = [
-            tool if isinstance(tool, dict) and "function" in tool else {"type": "function", "function": tool}
-            for tool in tools
-        ]
+        rendered_messages[0]["tools"] = _canonicalize_tools(tools)
 
     prompt = encoding_dsv32.encode_messages(
         rendered_messages,
