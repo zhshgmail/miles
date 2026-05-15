@@ -14,10 +14,15 @@ from tests.ci.ci_register import register_cuda_ci
 register_cuda_ci(est_time=9600, suite="stage-b-sglang-8-gpu", num_gpus=8)
 
 
+import argparse
 import os
 from dataclasses import dataclass
 
-from miles.utils.test_utils.session_verify_runner import ASSISTANT_TEXT_MISMATCH_RATIO_THRESHOLD, run_session_verify
+from miles.utils.test_utils.session_verify_runner import (
+    ASSISTANT_TEXT_MISMATCH_RATIO_THRESHOLD,
+    SESSION_VERIFY_INVARIANT_ARGS,
+    run_session_verify,
+)
 
 
 @dataclass(frozen=True)
@@ -168,17 +173,22 @@ def _get_config(model_family: str) -> ModelConfig:
 
 def _run_one(model_family: str):
     cfg = _get_config(model_family)
-    run_session_verify(
+    args = argparse.Namespace(
         hf_checkpoint=cfg.model_name,
         tito_model=cfg.tito_model,
-        allowed_append_roles=list(cfg.allowed_append_roles),
-        reasoning_parser=cfg.reasoning_parser,
-        tool_call_parser=cfg.tool_call_parser,
-        tp_size=cfg.tp_size,
-        cycles=cfg.cycles,
-        assistant_text_threshold=cfg.assistant_text_threshold,
+        tito_allowed_append_roles=list(cfg.allowed_append_roles),
+        sglang_reasoning_parser=cfg.reasoning_parser,
+        sglang_tool_call_parser=cfg.tool_call_parser,
+        rollout_num_gpus_per_engine=cfg.tp_size,
+        actor_num_nodes=1,
+        actor_num_gpus_per_node=8,
+        n_samples_per_prompt=4,
+        session_verify_cycles=cfg.cycles,
         tool_call_failure_mode=cfg.tool_call_failure_mode,
+        assistant_text_threshold=cfg.assistant_text_threshold,
+        **SESSION_VERIFY_INVARIANT_ARGS,
     )
+    run_session_verify(args=args)
 
 
 def test_session_server_multi_role():
