@@ -723,14 +723,15 @@ class DeepSeekV32TITOTokenizer(TITOTokenizer):
     ``miles.utils.chat_template_utils.deepseek_v32`` so TITO append-only
     tokenization stays byte-aligned with what the runtime serves.
 
-    Two SUPPORTED_TEMPLATES rows:
-    - ``{tool}``: tool-only agentic surface; ``encode_messages`` default
-      ``drop_thinking=True`` is fine because no prior assistant thinking
-      content gets re-rendered after the initial user turn.
-    - ``{tool, user}``: multi-turn user surface; we must pin
-      ``drop_thinking=False`` to keep the append-only invariant
-      (otherwise re-encoding the same prefix yields different tokens
-      depending on what is appended after).
+    Only the ``{tool}`` SUPPORTED_TEMPLATES row is registered: DeepSeek's
+    official ``encoding_dsv32`` (see
+    https://huggingface.co/deepseek-ai/DeepSeek-V3.2/blob/main/encoding/encoding_dsv32.py
+    line 240) gates rendering of an assistant's thinking block on
+    ``index > last_user_idx`` — appending a new user turn strips the
+    thinking block off every prior assistant, which is non-append-only
+    and incompatible with TITO incremental tokenization. Tool-only
+    append is safe because ``find_last_user_index`` ignores tool
+    messages, so the last-user position never moves.
     """
 
     reasoning_parser = "deepseek-v3"
@@ -740,11 +741,6 @@ class DeepSeekV32TITOTokenizer(TITOTokenizer):
         FixedTemplateRow(
             allowed_roles=frozenset({"tool"}),
             template=None,
-        ),
-        FixedTemplateRow(
-            allowed_roles=frozenset({"tool", "user"}),
-            template=None,
-            extra_kwargs={"drop_thinking": False},
         ),
     )
 
