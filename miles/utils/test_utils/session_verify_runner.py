@@ -78,6 +78,10 @@ SESSION_VERIFY_INVARIANT_ARGS: dict[str, Any] = {
     "debug_rollout_only": True,
     "colocate": True,
     "train_backend": "fsdp",
+    # session-verify is a CI-style verifier; the FSDP backend raises a hard
+    # "not maintained" error in non-ci_test runs, so set this on by default
+    # for both pytest (Namespace construction) and CLI (set_defaults) paths.
+    "ci_test": True,
 }
 
 
@@ -172,12 +176,20 @@ def _namespace_to_train_args(ns: argparse.Namespace) -> str:
     ]
     if ns.sglang_tool_call_parser:
         parts.append(f"--sglang-tool-call-parser {ns.sglang_tool_call_parser}")
+    if getattr(ns, "sglang_expert_parallel_size", 1) != 1:
+        parts.append(f"--sglang-expert-parallel-size {ns.sglang_expert_parallel_size}")
     if ns.use_session_server:
         parts.append("--use-session-server")
     if ns.debug_rollout_only:
         parts.append("--debug-rollout-only")
-    if ns.colocate:
-        parts.append("--colocate")
+    # Always force --colocate on for session-verify: miles_validate_args
+    # zeroes ns.colocate when debug_rollout_only=True (it converts colocate to
+    # a derived ``rollout_num_gpus``), so the original wrapper ns.colocate
+    # arrives False even though the user opted in.  Without --colocate the
+    # sub-process needs an explicit --rollout-num-gpus, which we don't emit.
+    parts.append("--colocate")
+    if getattr(ns, "ci_test", False):
+        parts.append("--ci-test")
     return " ".join(parts) + " "
 
 
@@ -213,9 +225,7 @@ def run_session_verify(args: argparse.Namespace) -> None:
     args.sglang_reasoning_parser, args.sglang_tool_call_parser = resolve_reasoning_and_tool_call_parser(
         args.tito_model, args.sglang_reasoning_parser, args.sglang_tool_call_parser
     )
-    args.tito_allowed_append_roles = sorted(
-        set(r.lower() for r in args.tito_allowed_append_roles) | {"tool"}
-    )
+    args.tito_allowed_append_roles = sorted(set(r.lower() for r in args.tito_allowed_append_roles) | {"tool"})
 
     _ensure_prompt_data()
     _clear_proxy_env()
