@@ -56,10 +56,7 @@ import sys
 
 from miles.utils.arguments import parse_args
 from miles.utils.test_utils.session_verify_agent import select_schedule
-from miles.utils.test_utils.session_verify_runner import (
-    _session_verify_extras,
-    run_session_verify,
-)
+from miles.utils.test_utils.session_verify_runner import _session_verify_extras, run_session_verify
 
 
 def _print_action_table(allowed_roles: list[str]) -> None:

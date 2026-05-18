@@ -1,3 +1,4 @@
+import argparse
 import json
 
 from tests.ci.ci_register import register_cpu_ci
@@ -6,32 +7,49 @@ register_cpu_ci(est_time=60, suite="stage-a-fast")
 
 import pytest
 
-from miles.utils.test_utils.session_verify_runner import _assert_session_verify_metrics, build_train_args
+from miles.utils.test_utils.session_verify_runner import (
+    SESSION_VERIFY_INVARIANT_ARGS,
+    _assert_session_verify_metrics,
+    _namespace_to_train_args,
+)
 
 
 def _build_args(**overrides) -> str:
-    kwargs = {
-        "local_model_dir": "/root/models/test-model",
+    values = {
+        **SESSION_VERIFY_INVARIANT_ARGS,
+        "hf_checkpoint": "/root/models/test-model",
         "tito_model": "qwen3",
-        "allowed_append_roles": ["tool", "user"],
-        "tp_size": 2,
-        "reasoning_parser": "qwen3",
-        "tool_call_parser": "qwen25",
+        "tito_allowed_append_roles": ["tool", "user"],
+        "rollout_num_gpus_per_engine": 2,
+        "actor_num_nodes": 1,
+        "actor_num_gpus_per_node": 8,
+        "n_samples_per_prompt": 4,
+        "session_verify_cycles": 3,
+        "tool_call_failure_mode": "rollback",
+        "sglang_reasoning_parser": "qwen3",
+        "sglang_tool_call_parser": "qwen25",
     }
-    kwargs.update(overrides)
-    return build_train_args(**kwargs)
+    values.update(overrides)
+    return _namespace_to_train_args(argparse.Namespace(**values))
 
 
-def test_build_train_args_uses_default_rollout_max_response_len():
+def test_namespace_to_train_args_uses_default_rollout_max_response_len():
     train_args = _build_args()
 
     assert "--rollout-max-response-len 8192" in train_args
 
 
-def test_build_train_args_allows_model_specific_rollout_max_response_len():
+def test_namespace_to_train_args_allows_model_specific_rollout_max_response_len():
     train_args = _build_args(rollout_max_response_len=16384)
 
     assert "--rollout-max-response-len 16384" in train_args
+
+
+def test_namespace_to_train_args_keeps_ci_test_enabled_for_fsdp_debug_rollout():
+    train_args = _build_args()
+
+    assert "--train-backend fsdp" in train_args
+    assert "--ci-test" in train_args
 
 
 def _write_metrics(path, entries: list[dict]) -> None:

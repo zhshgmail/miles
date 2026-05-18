@@ -76,6 +76,7 @@ SESSION_VERIFY_INVARIANT_ARGS: dict[str, Any] = {
     "custom_agent_function_path": "miles.utils.test_utils.session_verify_agent.run_agent",
     "use_session_server": True,
     "debug_rollout_only": True,
+    "ci_test": True,
     "colocate": True,
     "train_backend": "fsdp",
 }
@@ -176,6 +177,8 @@ def _namespace_to_train_args(ns: argparse.Namespace) -> str:
         parts.append("--use-session-server")
     if ns.debug_rollout_only:
         parts.append("--debug-rollout-only")
+    if ns.ci_test:
+        parts.append("--ci-test")
     if ns.colocate:
         parts.append("--colocate")
     return " ".join(parts) + " "
@@ -213,9 +216,7 @@ def run_session_verify(args: argparse.Namespace) -> None:
     args.sglang_reasoning_parser, args.sglang_tool_call_parser = resolve_reasoning_and_tool_call_parser(
         args.tito_model, args.sglang_reasoning_parser, args.sglang_tool_call_parser
     )
-    args.tito_allowed_append_roles = sorted(
-        set(r.lower() for r in args.tito_allowed_append_roles) | {"tool"}
-    )
+    args.tito_allowed_append_roles = sorted(set(r.lower() for r in args.tito_allowed_append_roles) | {"tool"})
 
     _ensure_prompt_data()
     _clear_proxy_env()
