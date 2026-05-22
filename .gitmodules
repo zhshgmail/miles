@@ -13,4 +13,4 @@
 [submodule "third_party/Megatron-LM"]
 	path = third_party/Megatron-LM
 	url = git@github.com:radixark/Megatron-LM.git
-	branch = miles-main
+	branch = miles/move-plugins-to-miles
