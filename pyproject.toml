@@ -58,4 +58,6 @@ norecursedirs = [
     "{arch}",
 ]
 asyncio_mode = "auto"
-# NOTE: we do not use pytest markers currently. tests are mainly separated by folders, i.e. tests/fast vs tests/e2e
+# NOTE: we do not use pytest markers currently. tests are mainly separated by folders:
+# tests/fast (CPU, stage-a-cpu by directory convention via collect_tests),
+# tests/fast-gpu (CUDA fast, explicit register_cuda_ci required), tests/e2e (end-to-end).
