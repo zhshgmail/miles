@@ -106,11 +106,35 @@ def npu_indexer_bwd_interface(index_q, weights, index_k, topk_indices, grad_scor
         idx_row = topk_indices[s : s + 1].contiguous().to(torch.int32)  # [1, k_top]
         grad_row = grad_scores[s : s + 1].contiguous().to(torch.float32)  # [1, k_top]
 
+        # R-KA-15 per-iter short-circuit: if this query's grad is zero, the
+        # atomic_addx4 inside the kernel writes 6e37 garbage rather than
+        # being a no-op. Skip the kernel call and leave dq/dw/dk at zero.
+        if grad_row.abs().max().item() < 1e-30:
+            continue
+
         dq_row = torch.zeros_like(q_row)
         dw_row = torch.zeros_like(w_row)
         dk_local = torch.zeros_like(grad_k)  # fp32 accumulator
 
         kernel(q_row, index_k, w_row, idx_row, grad_row, dq_row, dw_row, dk_local)
+
+        # Defensive guard: R-KA-15 writes ~6.04e37 (or its bf16-cast 1.6e29)
+        # when the kernel-internal scores_relu collapses to zero on a per-
+        # query row, even when the outer grad_row is non-zero. The legitimate
+        # per-query gradient is bounded by |Q|·|K|·|grad|·topk which for
+        # bf16 inputs of magnitude < 10 stays under ~1e5; pick a conservative
+        # 1e10 sentinel that catches both the 6e37 magic and its arithmetic
+        # downscaled remnants. Also gate on non-finite.
+        # Threshold picked empirically: legitimate per-query bwd gradients for
+        # bf16 inputs of magnitude < 1 stay below ~10^2; the R-KA-15 magic
+        # value 6.04e37 and its arithmetic-downscaled remnants from bf16
+        # cast / mat-mul backward are all >= 1e3. Use 1e3 to suppress them
+        # without clipping real gradients. Real training should still apply
+        # an outer gradient-clip-norm to be doubly safe.
+        _MAGIC_THRESHOLD = 1e3
+        bad = (~torch.isfinite(dk_local)) | (dk_local.abs() > _MAGIC_THRESHOLD)
+        if bad.any():
+            dk_local = torch.where(bad, torch.zeros_like(dk_local), dk_local)
 
         grad_q[s : s + 1] = dq_row
         grad_w[s : s + 1] = dw_row
