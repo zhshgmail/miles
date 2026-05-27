@@ -1,20 +1,5 @@
-import sys
-import platform
-
 from setuptools import find_namespace_packages, find_packages, setup
 from wheel.bdist_wheel import bdist_wheel as _bdist_wheel
-
-
-def _get_platform_tag():
-    if platform.system() != "Linux":
-        return platform.system().lower()
-
-    machine = platform.machine().lower()
-    if machine in ("x86_64", "amd64"):
-        return "manylinux1_x86_64"
-    if machine in ("aarch64", "arm64"):
-        return "manylinux2014_aarch64"
-    return f"linux_{machine}"
 
 
 def _fetch_requirements(path):
@@ -22,18 +7,27 @@ def _fetch_requirements(path):
         return [r.strip() for r in fd.readlines() if r.strip() and not r.startswith("#")]
 
 
-# Custom wheel class to modify the wheel name
+# Custom wheel class for the bundled miles-rl wheel.
+#
+# After Phase 6 bundles the patched sglang + Megatron-LM Python source
+# from third_party/* into the miles wheel, the wheel contains *only*
+# Python source — no compiled extensions are built during this packaging
+# step (the GPU kernels in sglang are built at runtime via sgl-kernel,
+# which is a separate PyPI package listed in extras_require["gpu"]).
+#
+# A pure-Python wheel must be tagged `py3-none-any` so it installs on any
+# Python 3.x interpreter and any platform. Forcing a platform/ABI-specific
+# tag (the previous behavior) made cp311 builds incompatible with the
+# Python 3.12 production image.
 class bdist_wheel(_bdist_wheel):
     def finalize_options(self):
         _bdist_wheel.finalize_options(self)
-        self.root_is_pure = False
+        # No compiled extensions in this wheel.
+        self.root_is_pure = True
 
     def get_tag(self):
-        python_version = f"cp{sys.version_info.major}{sys.version_info.minor}"
-        abi_tag = f"{python_version}"
-        platform_tag = _get_platform_tag()
-
-        return python_version, abi_tag, platform_tag
+        # py3 (any Python 3), none (no ABI constraint), any (any platform).
+        return "py3", "none", "any"
 
 
 # ----------------------------------------------------------------
