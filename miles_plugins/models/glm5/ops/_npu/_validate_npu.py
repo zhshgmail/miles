@@ -31,8 +31,13 @@ def _allclose(a: torch.Tensor, b: torch.Tensor, atol: float, rtol: float) -> tup
 
 
 def validate_indexer_fwd():
-    """Exercise `indexer_fwd_interface` on NPU vs a pure-torch CPU ref."""
-    from miles_plugins.models.glm5.ops.tilelang_indexer_fwd import indexer_fwd_interface
+    """Exercise `indexer_fwd_interface` on NPU vs a pure-torch CPU ref.
+
+    Calls our NPU implementation directly (bypassing miles' GPU module which
+    would import @tilelang.jit decorators referencing CUDA-only symbols on
+    module load).
+    """
+    from miles_plugins.models.glm5.ops._npu.indexer import npu_indexer_fwd_interface as indexer_fwd_interface
 
     _seed(0)
     SEQ, SKV, H, D = 8, 16, 8, 32
@@ -65,13 +70,14 @@ def validate_indexer_fwd():
 
 def validate_indexer_bwd():
     """Exercise `indexer_bwd_interface` on NPU vs autograd CPU ref."""
-    from miles_plugins.models.glm5.ops.tilelang_indexer_bwd import indexer_bwd_interface
+    from miles_plugins.models.glm5.ops._npu.indexer import npu_indexer_bwd_interface as indexer_bwd_interface
 
     _seed(1)
     SEQ, SKV, H, D, K = 1, 16, 8, 32, 4
-    q_cpu = torch.randn(SEQ, H, D, dtype=torch.float32, requires_grad=True) * 0.5
-    k_cpu = torch.randn(SKV, D, dtype=torch.float32, requires_grad=True) * 0.5
-    w_cpu = torch.rand(SEQ, H, dtype=torch.float32, requires_grad=True)
+    # leaf tensors (requires_grad must apply directly on a leaf, not after *0.5)
+    q_cpu = (torch.randn(SEQ, H, D, dtype=torch.float32) * 0.5).detach().requires_grad_(True)
+    k_cpu = (torch.randn(SKV, D, dtype=torch.float32) * 0.5).detach().requires_grad_(True)
+    w_cpu = torch.rand(SEQ, H, dtype=torch.float32).detach().requires_grad_(True)
     topk = torch.tensor([[0, 3, 7, 11]], dtype=torch.int32).expand(SEQ, K).contiguous()
     grad_scores = torch.randn(SEQ, K, dtype=torch.float32) * 0.1
 
@@ -104,7 +110,7 @@ def validate_indexer_bwd():
 
 def validate_sparse_mla_fwd():
     """Exercise `sparse_mla_fwd_interface` on NPU vs CPU fp32 ref."""
-    from miles_plugins.models.glm5.ops.tilelang_sparse_mla_fwd import sparse_mla_fwd_interface
+    from miles_plugins.models.glm5.ops._npu.sparse_mla import npu_sparse_mla_fwd_interface as sparse_mla_fwd_interface
 
     _seed(2)
     S, SKV, H = 8, 16, 16
@@ -143,9 +149,11 @@ def validate_sparse_mla_fwd():
 
 
 def validate_sparse_mla_bwd():
-    """Exercise `sparse_mla_bwd` on NPU. R-KA-13 E5 in-kernel; expect cosine > 0.9."""
-    from miles_plugins.models.glm5.ops.tilelang_sparse_mla_bwd import sparse_mla_bwd
-    from miles_plugins.models.glm5.ops.tilelang_sparse_mla_fwd import sparse_mla_fwd_interface
+    """Exercise `sparse_mla_bwd` on NPU. R-KA-13 E5 in-kernel; expect cosine > 0.85."""
+    from miles_plugins.models.glm5.ops._npu.sparse_mla import (
+        npu_sparse_mla_bwd as sparse_mla_bwd,
+        npu_sparse_mla_fwd_interface as sparse_mla_fwd_interface,
+    )
 
     _seed(3)
     S, SKV, H = 8, 16, 16
@@ -163,9 +171,9 @@ def validate_sparse_mla_bwd():
         indices_cpu[s, 0, :] = perm.to(torch.int32)
     dO_cpu = torch.randn(S, H, D, dtype=torch.float32) * 0.5
 
-    # CPU autograd ref
-    q_ag = q_cpu.clone().requires_grad_(True)
-    kv_ag = kv_cpu.clone().requires_grad_(True)
+    # CPU autograd ref — clone first, then mark as leaf with requires_grad
+    q_ag = q_cpu.clone().detach().requires_grad_(True)
+    kv_ag = kv_cpu.clone().detach().requires_grad_(True)
     out_ref = torch.zeros(S, H, D, dtype=torch.float32)
     for s in range(S):
         idxs = indices_cpu[s, 0].long()

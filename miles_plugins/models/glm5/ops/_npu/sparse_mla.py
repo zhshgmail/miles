@@ -61,6 +61,8 @@ def npu_sparse_mla_fwd_interface(
     topk = idx4.shape[-1]
     tail_dim = dim_plus_tail - d_v
 
+    # block_N must divide topk; default cap 64 but tests use smaller topk
+    block_N = min(block_I, topk)
     kernel = _npu_sparse_mla_fwd(
         batch=batch,
         seq_len=seq_len,
@@ -69,7 +71,7 @@ def npu_sparse_mla_fwd_interface(
         dim=d_v,
         tail_dim=tail_dim,
         topk=topk,
-        block_N=block_I,
+        block_N=block_N,
         num_stages=num_stages,
     )
     out4, lse4 = kernel(q4, kv4, idx4)
@@ -90,6 +92,7 @@ def npu_sparse_mla_bwd(
     is_casual: bool = True,
     return_kernel: bool = False,
     delta=None,
+    d_v: int | None = None,
 ):
     """Drop-in for miles' sparse_mla_bwd on NPU.
 
@@ -111,7 +114,10 @@ def npu_sparse_mla_bwd(
 
     B, S, H, dim_plus_tail = q4.shape
     _, S_kv, kv_group, _ = kv4.shape
-    d_v = 512
+    # Infer d_v from caller-supplied output shape (`o`) when not given. miles'
+    # GPU path uses d_v=512 by convention but we accept any.
+    if d_v is None:
+        d_v = o.shape[-1]
     D_tail = dim_plus_tail - d_v
     topk = idx4.shape[-1]
 
@@ -120,12 +126,26 @@ def npu_sparse_mla_bwd(
         preprocess_kernel = _npu_preprocess(B, S, H, d_v)
         # our preprocess output is [B, S, H, 1] (trailing 1 for rank parity)
         delta = preprocess_kernel(o4, do4)
-    # main bwd kernel computes dq, accumulates dkv in fp32 via atomic_addx4
-    bwd_kernel = _npu_bwd_main(B, S, S_kv, H, d_v, D_tail, topk, kv_group, sm_scale, is_casual)
+    # main bwd kernel computes dq, accumulates dkv in fp32 via atomic_addx4.
+    # Our kernel signature is (batch, seq_len, seq_len_kv, heads, dim, tail_dim,
+    # topk, block_size=32, num_stages=1) — sm_scale + is_casual + kv_group are
+    # not parameters (kv_group=1 baked in; sm_scale auto from D+DT; causal mask
+    # via indices ordering). block_size must divide topk.
+    block_size = min(32, topk)
+    while topk % block_size != 0:
+        block_size //= 2
+    bwd_kernel = _npu_bwd_main(B, S, S_kv, H, d_v, D_tail, topk, block_size=block_size)
     dkv = torch.zeros_like(kv4, dtype=torch.float32)
-    dq = bwd_kernel(q4, kv4, do4, idx4, lse4, delta, dkv)
-    # postprocess cast dkv fp32 -> dtype
-    postprocess_kernel = _npu_postprocess(B, S_kv, d_v, D_tail, kv_group)
+    # Kernel signature: Q, KV, dO, Indices, Lse, Delta, dQ, dKV (8 args, no out_idx).
+    # dQ must be pre-allocated by the caller.
+    dq = torch.zeros_like(q4)
+    bwd_kernel(q4, kv4, do4, idx4, lse4, delta, dq, dkv)
+    # postprocess cast dkv fp32 -> dtype. Signature: (B, S_kv, dim_plus_tail,
+    # block_N=64). block_N must divide S_kv (first-port aligned assumption).
+    pp_block_N = 64
+    while S_kv % pp_block_N != 0 and pp_block_N > 1:
+        pp_block_N //= 2
+    postprocess_kernel = _npu_postprocess(B, S_kv, d_v + D_tail, block_N=pp_block_N)
     dkv = postprocess_kernel(dkv)
 
     return dq.squeeze(0), dkv.squeeze(0)

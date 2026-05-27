@@ -37,6 +37,16 @@ def _apply_clean_logits(logits: torch.Tensor, cu_seqlen_ks: torch.Tensor, cu_seq
     logits.masked_fill_(~mask, float("-inf"))
 
 
+def _largest_pow2_divisor(n: int, cap: int) -> int:
+    """Largest power-of-2 that divides n, capped at `cap`."""
+    if n <= 0:
+        return 1
+    pw = 1
+    while pw * 2 <= min(n, cap) and n % (pw * 2) == 0:
+        pw *= 2
+    return pw
+
+
 def npu_indexer_fwd_interface(q, kv, weights, cu_seqlen_ks, cu_seqlen_ke, clean_logits=True):
     """Drop-in for miles' indexer_fwd_interface on NPU."""
     seq_len, heads, index_dim = q.shape
@@ -47,7 +57,11 @@ def npu_indexer_fwd_interface(q, kv, weights, cu_seqlen_ks, cu_seqlen_ke, clean_
     kv = kv.contiguous()
     weights = weights.contiguous()
 
-    kernel = lighting_indexer_fwd(seq_len, seq_len_kv, heads, index_dim)
+    # Pick block_N / block_Q that divide the input dims (kernel asserts).
+    block_N = _largest_pow2_divisor(seq_len_kv, cap=64)
+    block_Q = _largest_pow2_divisor(seq_len, cap=max(1, 128 // heads))
+
+    kernel = lighting_indexer_fwd(seq_len, seq_len_kv, heads, index_dim, block_N=block_N, block_Q=block_Q)
     logits = kernel(q.view(seq_len * heads, index_dim), kv, weights)
 
     if clean_logits:
@@ -77,8 +91,9 @@ def npu_indexer_bwd_interface(index_q, weights, index_k, topk_indices, grad_scor
         return grad_q, grad_w, grad_k
 
     # R-KA-14 work-around: per-seq-position SEQ=1 call.
+    block_I = _largest_pow2_divisor(k_top, cap=32)
     kernel = lighting_indexer_bwd(
-        seq_len=1, seq_len_kv=seq_len_kv, heads=head_num, index_dim=head_dim, topk=k_top
+        seq_len=1, seq_len_kv=seq_len_kv, heads=head_num, index_dim=head_dim, topk=k_top, block_I=block_I
     )
 
     # weights shape is [seq, heads] (miles squeezed in caller); ensure 2D.
