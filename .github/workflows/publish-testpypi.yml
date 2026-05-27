@@ -178,23 +178,40 @@ jobs:
             "${RENAME_TO}==${DEV_VERSION}"
           /tmp/smoke/bin/pip show "${RENAME_TO}"
           echo
-          echo "--- imports with PYTHONPATH unset ---"
+          echo "--- bundled-package presence check (no init-time execution) ---"
+          # Use importlib.util.find_spec to verify the bundled packages were
+          # placed at the expected site-packages paths, WITHOUT executing
+          # their __init__.py. Executing the init would pull in the heavy
+          # transitive deps (numpy, torch, ...) which are absent in this
+          # --no-deps venv. We're proving "the wheel installed the right
+          # files at the right places" — runtime correctness of the
+          # bundled code is validated separately by the docker image
+          # tests (pr-test.yml).
           /tmp/smoke/bin/python <<'PYEOF'
-          import sys
-          # Confirm imports work and the modules came from our installed wheel,
-          # not from any leftover system path.
-          import miles
-          import miles_plugins
-          import miles_megatron_plugins.true_on_policy.contracts
-          import sglang
-          import megatron.core
-          # megatron.training is needed because miles imports from it.
-          import megatron.training
-          for name in ('miles', 'miles_plugins', 'miles_megatron_plugins',
-                       'sglang', 'megatron.core', 'megatron.training'):
-              mod = sys.modules[name]
-              path = getattr(mod, '__file__', None) or list(mod.__path__)
-              print(f"  {name:35} -> {path}")
-          print()
-          print("OK: all bundled imports resolve cleanly.")
+          import importlib.util, sys
+
+          candidates = [
+              'miles',
+              'miles_plugins',
+              'miles_megatron_plugins',
+              'miles_megatron_plugins.true_on_policy.contracts',
+              'sglang',
+              'megatron',
+              'megatron.core',
+              'megatron.training',
+          ]
+
+          missing = []
+          for name in candidates:
+              spec = importlib.util.find_spec(name)
+              if spec is None:
+                  missing.append(name)
+                  continue
+              loc = spec.origin or (list(spec.submodule_search_locations) if spec.submodule_search_locations else "<no location>")
+              print(f"  {name:45} -> {loc}")
+
+          if missing:
+              print(f"\nMISSING modules in the installed wheel: {missing}")
+              sys.exit(1)
+          print("\nOK: all bundled packages located at expected install paths.")
           PYEOF
