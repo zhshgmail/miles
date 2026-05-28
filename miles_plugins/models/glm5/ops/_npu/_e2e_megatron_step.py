@@ -345,6 +345,25 @@ def main():
     )
     position_ids = torch.arange(SEQ, dtype=torch.int64).unsqueeze(0).npu()
 
+    # Capture the indexer's index_score so its gradient flows back into
+    # wq_b / wk / k_norm / weights_proj (in miles' production GLM-5 the
+    # full model uses index_score in the residual stream; the attention
+    # layer alone discards it, hence wrapping the indexer call to also
+    # publish index_score for our loss).
+    indexer_captures: list = []
+
+    from miles_plugins.models.glm5.ops.indexer import lighting_indexer as _real_lighting_indexer
+
+    def _captured_lighting_indexer(index_q, index_k, weights, cu_seqlen_ks, cu_seqlen_ke, topk, topk_indices=None):
+        score, indices = _real_lighting_indexer(
+            index_q, index_k, weights, cu_seqlen_ks, cu_seqlen_ke, topk, topk_indices=topk_indices
+        )
+        indexer_captures.append(score)
+        return score, indices
+
+    import miles_plugins.models.glm5.glm5 as _glm5_module
+    _glm5_module.lighting_indexer = _captured_lighting_indexer  # type: ignore[assignment]
+
     print(f"[rank {local_rank}] forward ...")
     out = attn(
         hidden_states=hidden_states,
@@ -360,13 +379,32 @@ def main():
         primary = out
         print(f"  out shape: {primary.shape}")
 
+    print(f"  captured {len(indexer_captures)} indexer scores; shape: {indexer_captures[0].shape if indexer_captures else 'none'}")
+
     # Backward through the full Megatron-driven attention.
     print(f"[rank {local_rank}] backward ...")
     snap_name, snap_param = next(iter(attn.named_parameters()))
     snap_pre = snap_param.detach().clone()
     opt = torch.optim.Adam(attn.parameters(), lr=1e-3)
     advantage = (torch.randn_like(primary.float()) * 0.5).clamp(-1, 1)
-    loss = -(primary.float() * advantage).sum() / max(1, primary.numel())
+    # Primary loss from MLA output + auxiliary indexer-score loss so the
+    # indexer-side parameters (wq_b/wk/k_norm/weights_proj) also receive
+    # gradient — mimicking real GLM-5 where index_score feeds the residual.
+    mla_loss = -(primary.float() * advantage).sum() / max(1, primary.numel())
+    if indexer_captures:
+        # The softmax'd indexer score has -inf entries where the topk
+        # selection was invalid (cu_seqlens-masked). Mask them out before
+        # taking the auxiliary loss; otherwise (-inf)^2 = inf poisons the
+        # backward. Use a small coefficient so the aux signal doesn't
+        # dominate the MLA gradient.
+        idx_score = indexer_captures[0].float()
+        valid_mask = torch.isfinite(idx_score)
+        valid_score = torch.where(valid_mask, idx_score, torch.zeros_like(idx_score))
+        idx_loss = valid_score.pow(2).sum() / max(1, valid_mask.sum().item()) * 0.01
+        loss = mla_loss + idx_loss
+        print(f"  mla_loss = {mla_loss.item():.5f}, idx_loss = {idx_loss.item():.5f}")
+    else:
+        loss = mla_loss
     print(f"  loss = {loss.item():.5f}")
     opt.zero_grad()
     loss.backward()
