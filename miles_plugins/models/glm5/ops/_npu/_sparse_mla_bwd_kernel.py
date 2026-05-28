@@ -155,6 +155,7 @@ def sparse_mla_bwd_main(
     topk,
     block_size=32,
     num_stages=1,
+    block_H_inner=None,
 ):
     """Main bwd kernel (kv_group=1, NH=1 first pass).
 
@@ -178,7 +179,13 @@ def sparse_mla_bwd_main(
     sm_scale_mul_log2e = sm_scale  # no log2 conversion; keep natural base
     use_natural_base = True  # cf. fwd kernel's Lse convention
     BS = block_size
-    block_H = heads
+    if block_H_inner is None:
+        block_H_inner = heads
+    assert heads % block_H_inner == 0, (
+        f"block_H_inner={block_H_inner} must divide heads={heads}"
+    )
+    head_groups = heads // block_H_inner
+    block_H = block_H_inner  # per-block head tile — UB-bounded
     NS = (topk + BS - 1) // BS
     assert topk % BS == 0, f"topk {topk} must be divisible by block_size {BS}"
 
@@ -200,9 +207,16 @@ def sparse_mla_bwd_main(
         dQ: T.Tensor(q_shape, dtype),
         dKV: T.Tensor(k_shape, accum_dtype),
     ):
-        with T.Kernel(batch * seq_len, is_npu=True) as (cid, _):
-            b_i = cid // seq_len
-            s_i = cid % seq_len
+        # Grid: batch * seq_len * head_groups. See sparse_mla_fwd_kernel.py
+        # for the rationale — keeps per-block UB footprint bounded by
+        # block_H_inner so acc_dq [block_H_inner, D] fp32 fits within
+        # the 192 KB dav-c220 UB.
+        with T.Kernel(batch * seq_len * head_groups, is_npu=True) as (cid, _):
+            b_i = cid // (seq_len * head_groups)
+            rem = cid % (seq_len * head_groups)
+            s_i = rem // head_groups
+            hg_i = rem % head_groups
+            h_start = hg_i * block_H
 
             Q_shared = T.alloc_shared([block_H, D], dtype)
             Q_tail_shared = T.alloc_shared([block_H, DT], dtype)
@@ -243,11 +257,11 @@ def sparse_mla_bwd_main(
             T.vbrc(value_zero, acc_dq)
             T.vbrc(value_zero, acc_dq_tail)
 
-            T.copy(Q[b_i, s_i, 0:block_H, 0:D], Q_shared)
-            T.copy(Q[b_i, s_i, 0:block_H, D : D + DT], Q_tail_shared)
-            T.copy(dO[b_i, s_i, 0:block_H, 0:D], dO_shared)
-            T.copy(Lse[b_i, s_i, 0:block_H, 0:1], Lse_shared)
-            T.copy(Delta[b_i, s_i, 0:block_H, 0:1], Delta_shared)
+            T.copy(Q[b_i, s_i, h_start : h_start + block_H, 0:D], Q_shared)
+            T.copy(Q[b_i, s_i, h_start : h_start + block_H, D : D + DT], Q_tail_shared)
+            T.copy(dO[b_i, s_i, h_start : h_start + block_H, 0:D], dO_shared)
+            T.copy(Lse[b_i, s_i, h_start : h_start + block_H, 0:1], Lse_shared)
+            T.copy(Delta[b_i, s_i, h_start : h_start + block_H, 0:1], Delta_shared)
             T.copy(Lse_shared, lse_frag)
             T.copy(Delta_shared, delta_frag)
             neg_one_val = -1.0
@@ -349,8 +363,8 @@ def sparse_mla_bwd_main(
             # If dQ[..., 0:D] is zero but dQ[..., D:D+DT] is non-zero, dP_shared_cast=0.
             T.vcast(acc_dq, dQ_shared, round_mode="rint")
             T.vcast(acc_dq_tail, dQ_tail_shared, round_mode="rint")
-            T.copy(dQ_shared, dQ[b_i, s_i, 0:block_H, 0:D])
-            T.copy(dQ_tail_shared, dQ[b_i, s_i, 0:block_H, D : D + DT])
+            T.copy(dQ_shared, dQ[b_i, s_i, h_start : h_start + block_H, 0:D])
+            T.copy(dQ_tail_shared, dQ[b_i, s_i, h_start : h_start + block_H, D : D + DT])
 
     return main
 

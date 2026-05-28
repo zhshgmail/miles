@@ -63,6 +63,12 @@ def npu_sparse_mla_fwd_interface(
 
     # block_N must divide topk; default cap 64 but tests use smaller topk
     block_N = min(block_I, topk)
+    # Pick block_M_inner so the per-block [block_M_inner, d_v] fp32 acc_o
+    # fragment stays within ~25% of UB; 16 heads * 512 dim * 4 B = 32 KB
+    # leaves room for KV_shared / Q_shared and scores buffers. Must divide
+    # heads. For 64 heads we get 4 head-groups; for 16 heads (small smoke
+    # tests) we just use the full head count (head_groups=1).
+    block_M_inner = 16 if heads % 16 == 0 and heads > 16 else heads
     kernel = _npu_sparse_mla_fwd(
         batch=batch,
         seq_len=seq_len,
@@ -73,6 +79,7 @@ def npu_sparse_mla_fwd_interface(
         topk=topk,
         block_N=block_N,
         num_stages=num_stages,
+        block_M_inner=block_M_inner,
     )
     out4, lse4 = kernel(q4, kv4, idx4)
     out = out4.squeeze(0)
@@ -134,7 +141,12 @@ def npu_sparse_mla_bwd(
     block_size = min(32, topk)
     while topk % block_size != 0:
         block_size //= 2
-    bwd_kernel = _npu_bwd_main(B, S, S_kv, H, d_v, D_tail, topk, block_size=block_size)
+    # Pick block_H_inner to match the fwd kernel's UB-fitting split.
+    block_H_inner = 16 if H % 16 == 0 and H > 16 else H
+    bwd_kernel = _npu_bwd_main(
+        B, S, S_kv, H, d_v, D_tail, topk,
+        block_size=block_size, block_H_inner=block_H_inner,
+    )
     dkv = torch.zeros_like(kv4, dtype=torch.float32)
     # Kernel signature: Q, KV, dO, Indices, Lse, Delta, dQ, dKV (8 args, no out_idx).
     # dQ must be pre-allocated by the caller.

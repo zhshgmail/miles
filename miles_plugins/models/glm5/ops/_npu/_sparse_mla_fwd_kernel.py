@@ -29,7 +29,17 @@ import tilelang
 import tilelang.language as T
 
 
-@tilelang.jit(out_idx=[-2, -1], target="npuir")
+@tilelang.jit(
+    out_idx=[-2, -1],
+    target="npuir",
+    pass_configs={
+        # Disable auto multi-buffer to halve UB pressure at large
+        # head counts (e.g. H=64 DSv4-Flash). Without this, an H=64
+        # `acc_o [64, D_V] fp32` accumulator paired with multi-buffer's
+        # 2x copies overflows the dav-c220 UB.
+        "npuir.enable_auto_multi_buffer": False,
+    },
+)
 def sparse_mla_fwd(
     batch,
     seq_len,
@@ -41,15 +51,34 @@ def sparse_mla_fwd(
     block_M=None,
     block_N=64,
     num_stages=2,
+    block_M_inner=None,
 ):
     """Sparse MLA forward kernel.
 
     Args correspond to upstream sparse_mla_fwd; kv_group is fixed at 1 here.
-    block_M defaults to heads (one Q-block per head group, matching upstream
-    H_per_block when REPLICATE_H==1).
+
+    `block_M` defaults to `heads` (one Q-block per head group). When
+    `block_M * dim * sizeof(fp32)` would exceed the chip's Unified Buffer
+    budget — true for real GLM-5 / DSv4-Flash shapes where `heads=64` and
+    `dim=512` give a 128 KB `acc_o` fragment alone — we *must* drop
+    `block_M` below `heads`. Set `block_M_inner` to the per-block head
+    count (must divide `heads`); the grid then loops over
+    `heads // block_M_inner` head-tiles per (batch, seq) cell so each NPU
+    block only ever materialises a `[block_M_inner, dim] fp32` accumulator.
+
+    With `block_M_inner = 16`, a `heads=64 / dim=512` kernel emits
+    `acc_o [16, 512] fp32 = 32 KB` instead of the previous 128 KB,
+    cutting the total per-block UB request from ~404 KB down to ~150 KB.
     """
     if block_M is None:
         block_M = heads
+    if block_M_inner is None:
+        block_M_inner = block_M
+    assert heads % block_M_inner == 0, (
+        f"block_M_inner={block_M_inner} must divide heads={heads}"
+    )
+    head_groups = heads // block_M_inner
+    block_M = block_M_inner  # all subsequent allocations use the inner tile
     D = dim
     DT = tail_dim
     dtype = "float16"
@@ -76,9 +105,16 @@ def sparse_mla_fwd(
         Output: T.Tensor(o_shape, dtype),
         Lse: T.Tensor(lse_shape, accum_dtype),
     ):
-        with T.Kernel(batch * seq_len, is_npu=True) as (cid, _):
-            b_i = cid // seq_len
-            s_i = cid % seq_len
+        # Grid: batch * seq_len * head_groups. Each NPU block owns one
+        # (b, s, head-group) cell and processes `block_M_inner` heads —
+        # this keeps the per-block UB footprint bounded by block_M_inner
+        # rather than the model's full head count.
+        with T.Kernel(batch * seq_len * head_groups, is_npu=True) as (cid, _):
+            b_i = cid // (seq_len * head_groups)
+            rem = cid % (seq_len * head_groups)
+            s_i = rem // head_groups
+            hg_i = rem % head_groups
+            h_start = hg_i * block_M  # H offset for this head-tile
 
             Q_shared = T.alloc_shared([block_M, D], dtype)
             Q_tail_shared = T.alloc_shared([block_M, DT], dtype)
@@ -107,8 +143,8 @@ def sparse_mla_fwd(
             T.vbrc(value_min, acc_m)
             T.vbrc(local_sm_scale, scales)
 
-            T.copy(Q[b_i, s_i, 0:block_M, 0:D], Q_shared)
-            T.copy(Q[b_i, s_i, 0:block_M, D : D + DT], Q_tail_shared)
+            T.copy(Q[b_i, s_i, h_start : h_start + block_M, 0:D], Q_shared)
+            T.copy(Q[b_i, s_i, h_start : h_start + block_M, D : D + DT], Q_tail_shared)
 
             for k in T.Pipelined(T.ceildiv(topk, block_N), num_stages=num_stages):
                 T.copy(Indices[b_i, s_i, 0, k * block_N], idx_buf)
@@ -141,7 +177,7 @@ def sparse_mla_fwd(
             T.vdiv(acc_o, acc_l, acc_o)
             O_cast = T.alloc_shared([block_M, D], dtype)
             T.vcast(acc_o, O_cast, round_mode="rint")
-            T.copy(O_cast, Output[b_i, s_i, 0:block_M, 0:D])
+            T.copy(O_cast, Output[b_i, s_i, h_start : h_start + block_M, 0:D])
 
             # Lse for bwd: log(acc_l) + acc_m. Kept as [BM,1] to match fragments;
             # caller squeezes the trailing 1 to recover [B,S,H].
@@ -150,7 +186,7 @@ def sparse_mla_fwd(
             T.vln(acc_l, tmp_lse)
             T.vadd(tmp_lse, acc_m, tmp_lse)
             T.copy(tmp_lse, Lse_shared)
-            T.copy(Lse_shared, Lse[b_i, s_i, 0:block_M, 0:1])
+            T.copy(Lse_shared, Lse[b_i, s_i, h_start : h_start + block_M, 0:1])
 
     return main
 
