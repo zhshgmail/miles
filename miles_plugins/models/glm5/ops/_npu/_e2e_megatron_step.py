@@ -222,22 +222,29 @@ def _init_distributed():
 
 
 def _build_config():
-    """Minimal MLATransformerConfig matching GLM-5 canonical small shapes."""
+    """Minimal MLATransformerConfig matching GLM-5 / DeepSeek-V4-Flash shapes.
+
+    Miles' sparse_mla_fwd_interface hardcodes `dim_plus_tail_dim == 576`.
+    From the published DeepSeek-V4-Flash HF config, the 576 = head_dim (512)
+    + qk_rope_head_dim (64). The "absorbed" Q dim that miles' GLM-5 layer
+    feeds to sparse_mla is `kv_lora_rank + qk_pos_emb_head_dim`; for that to
+    equal 576 we need `kv_lora_rank == 512`.
+    """
     cfg = MLATransformerConfig(
         # core transformer
         num_layers=1,
-        hidden_size=128,
+        hidden_size=128,         # tiny so the linear weights fit easily on 1 chip
         num_attention_heads=16,  # H_MLA
         ffn_hidden_size=256,
         kv_channels=128,
-        # MLA-specific — sized so qk_head_dim + qk_pos_emb_head_dim == 576
-        # which is the miles `sparse_mla_fwd_interface` hard-coded
-        # dim_plus_tail_dim (d_v=512, tail=64).
+        # MLA-specific — kv_lora_rank + qk_pos_emb_head_dim must == 576 to
+        # satisfy miles' hardcoded dim_plus_tail_dim assertion in
+        # `sparse_mla_fwd_interface`.
         q_lora_rank=64,
-        kv_lora_rank=64,
-        qk_head_dim=512,
+        kv_lora_rank=512,
+        qk_head_dim=128,
         qk_pos_emb_head_dim=64,
-        v_head_dim=512,          # D_V (matches our sparse_mla d_v)
+        v_head_dim=512,
         # GLM-5 lighting indexer
         # index_num_attention_heads / index_head_dim are NOT MLATransformerConfig
         # fields — they're injected from HF config by get_glm5_spec. We
@@ -339,22 +346,56 @@ def main():
     position_ids = torch.arange(SEQ, dtype=torch.int64).unsqueeze(0).npu()
 
     print(f"[rank {local_rank}] forward ...")
-    try:
-        out = attn(
-            hidden_states=hidden_states,
-            attention_mask=None,
-            inference_context=None,
-            packed_seq_params=packed,
-            position_ids=position_ids,
-        )
-        if isinstance(out, tuple):
-            print(f"  out tuple, lens: {[t.shape if hasattr(t,'shape') else type(t) for t in out]}")
+    out = attn(
+        hidden_states=hidden_states,
+        attention_mask=None,
+        inference_context=None,
+        packed_seq_params=packed,
+        position_ids=position_ids,
+    )
+    if isinstance(out, tuple):
+        primary = out[0]
+        print(f"  out tuple, lens: {[t.shape if hasattr(t,'shape') else type(t) for t in out]}")
+    else:
+        primary = out
+        print(f"  out shape: {primary.shape}")
+
+    # Backward through the full Megatron-driven attention.
+    print(f"[rank {local_rank}] backward ...")
+    snap_name, snap_param = next(iter(attn.named_parameters()))
+    snap_pre = snap_param.detach().clone()
+    opt = torch.optim.Adam(attn.parameters(), lr=1e-3)
+    advantage = (torch.randn_like(primary.float()) * 0.5).clamp(-1, 1)
+    loss = -(primary.float() * advantage).sum() / max(1, primary.numel())
+    print(f"  loss = {loss.item():.5f}")
+    opt.zero_grad()
+    loss.backward()
+
+    # Inspect gradients on every trainable param.
+    nan = []
+    finite_count = 0
+    grad_norm_sq = 0.0
+    for n, p in attn.named_parameters():
+        if p.grad is None:
+            print(f"  WARN: no grad for {n}")
+            continue
+        if not torch.isfinite(p.grad).all():
+            nan.append(n)
         else:
-            print(f"  out shape: {out.shape}")
-    except Exception as e:
-        print(f"  FAILED at forward: {type(e).__name__}: {e}")
-        import traceback
-        traceback.print_exc()
+            finite_count += 1
+            grad_norm_sq += p.grad.float().pow(2).sum().item()
+    grad_norm = grad_norm_sq ** 0.5
+    print(f"[rank {local_rank}] finite grads on {finite_count} params, non-finite on {len(nan)}, grad_norm={grad_norm:.4e}")
+    if nan:
+        print(f"  non-finite params: {nan[:5]}{'...' if len(nan) > 5 else ''}")
+
+    opt.step()
+    delta = (snap_param.detach() - snap_pre).abs().max().item()
+    print(f"[rank {local_rank}] weight delta on '{snap_name}': max_abs={delta:.4e}")
+    assert delta > 0, "weights did not change after Megatron-driven optim.step()"
+
+    print(f"\n=== Megatron-driven train-step on NPU ===")
+    print(f"  result: PASS")
 
     if dist.is_initialized():
         dist.destroy_process_group()
