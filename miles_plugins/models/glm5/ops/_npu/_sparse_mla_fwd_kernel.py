@@ -134,6 +134,14 @@ def sparse_mla_fwd(
             new_max = T.alloc_fragment([block_M, 1], accum_dtype)
             scales = T.alloc_fragment([block_M, block_N], accum_dtype)
             idx_buf = T.alloc_fragment([block_N], idx_dtype)
+            # R-KA-16 E5-style: expand `correction [block_M, 1]` to full
+            # `[block_M, D]` shape via Python scalar-fill immediately before
+            # the `acc_o = correction * acc_o` step. Without this, the
+            # broadcast vmul over `acc_o [block_M, D]` and `correction
+            # [block_M, 1]` lowers to a NaN-producing op when the loop runs
+            # more than one iter (NS >= 2 at production topk=512 / block_N=64).
+            correction_expanded = T.alloc_fragment([block_M, D], accum_dtype)
+            new_max_expanded = T.alloc_fragment([block_M, block_N], accum_dtype)
 
             local_sm_scale = sm_scale
             value_zero = 0
@@ -168,7 +176,13 @@ def sparse_mla_fwd(
                 T.reduce_sum(scores, local_sum, dim=1)
                 T.vmul(acc_l, correction, acc_l)
                 T.vadd(acc_l, local_sum, acc_l)
-                T.vmul(acc_o, correction, acc_o)
+                # R-KA-16 E5: scalar-fill correction_expanded[h, d] =
+                # correction[h, 0] immediately before the broadcast vmul.
+                # Mirrors the verified R-KA-13 E5 pattern from the bwd kernel.
+                for h_i in T.serial(block_M):
+                    for d_i in T.serial(D):
+                        correction_expanded[h_i, d_i] = correction[h_i, 0]
+                T.vmul(acc_o, correction_expanded, acc_o)
                 T.vcast(scores, scores_cast, round_mode="rint")
                 T.vbrc(value_zero, tmp1)
                 T.vadd(tmp1, new_max, acc_m)

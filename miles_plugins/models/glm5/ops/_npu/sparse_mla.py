@@ -69,6 +69,11 @@ def npu_sparse_mla_fwd_interface(
     # heads. For 64 heads we get 4 head-groups; for 16 heads (small smoke
     # tests) we just use the full head count (head_groups=1).
     block_M_inner = 16 if heads % 16 == 0 and heads > 16 else heads
+    # num_stages=1 is required for sparse_mla_fwd on NPU: at NS=topk/block_N
+    # > 1, the software-pipelined T.Pipelined loop interacts with the online
+    # softmax accumulator state and produces NaN output. The R-KA-16 E5 fix
+    # in the kernel (correction_expanded) handles the broadcast vmul; the
+    # num_stages=1 here handles the multi-buffer scheduling.
     kernel = _npu_sparse_mla_fwd(
         batch=batch,
         seq_len=seq_len,
@@ -78,7 +83,7 @@ def npu_sparse_mla_fwd_interface(
         tail_dim=tail_dim,
         topk=topk,
         block_N=block_N,
-        num_stages=num_stages,
+        num_stages=1,
         block_M_inner=block_M_inner,
     )
     out4, lse4 = kernel(q4, kv4, idx4)
