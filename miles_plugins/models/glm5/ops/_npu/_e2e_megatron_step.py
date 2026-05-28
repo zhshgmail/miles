@@ -222,25 +222,44 @@ def _init_distributed():
 
 
 def _build_config():
-    """Minimal MLATransformerConfig matching GLM-5 / DeepSeek-V4-Flash shapes.
+    """MLATransformerConfig matching GLM-5 / DeepSeek-V4-Flash shapes.
 
     Miles' sparse_mla_fwd_interface hardcodes `dim_plus_tail_dim == 576`.
     From the published DeepSeek-V4-Flash HF config, the 576 = head_dim (512)
     + qk_rope_head_dim (64). The "absorbed" Q dim that miles' GLM-5 layer
     feeds to sparse_mla is `kv_lora_rank + qk_pos_emb_head_dim`; for that to
     equal 576 we need `kv_lora_rank == 512`.
+
+    Two presets, switched by `MILES_E2E_SHAPE`:
+      * "reduced" (default): H=16 hidden=128 — small Megatron sanity smoke
+      * "real": H=64 hidden=512 q_lora_rank=1024 — DSv4-Flash production
+        head count; activates the tilelang block_M_inner=16 head-split
+        path on the four NPU kernels.
     """
+    preset = os.environ.get("MILES_E2E_SHAPE", "reduced")
+    if preset not in {"reduced", "real"}:
+        raise ValueError(f"MILES_E2E_SHAPE={preset!r}; expected 'reduced' or 'real'")
+    if preset == "real":
+        hidden = 512
+        n_heads = 64
+        q_lora = 1024
+        ffn_hidden = 1024
+    else:
+        hidden = 128
+        n_heads = 16
+        q_lora = 64
+        ffn_hidden = 256
     cfg = MLATransformerConfig(
         # core transformer
         num_layers=1,
-        hidden_size=128,         # tiny so the linear weights fit easily on 1 chip
-        num_attention_heads=16,  # H_MLA
-        ffn_hidden_size=256,
+        hidden_size=hidden,
+        num_attention_heads=n_heads,
+        ffn_hidden_size=ffn_hidden,
         kv_channels=128,
         # MLA-specific — kv_lora_rank + qk_pos_emb_head_dim must == 576 to
         # satisfy miles' hardcoded dim_plus_tail_dim assertion in
         # `sparse_mla_fwd_interface`.
-        q_lora_rank=64,
+        q_lora_rank=q_lora,
         kv_lora_rank=512,
         qk_head_dim=128,
         qk_pos_emb_head_dim=64,
@@ -324,11 +343,15 @@ def main():
     ).npu()
     print(f"[rank {local_rank}] DSAMLASelfAttention built: {type(attn).__name__}")
     print(f"  params: {sum(p.numel() for p in attn.parameters()):,}")
-    # glm5 hardcodes self.index_topk = 2048 in __init__; override for smoke.
-    attn.index_topk = 4
-
-    # Forward smoke.
-    SEQ = 16
+    # glm5 hardcodes self.index_topk = 2048 in __init__; override per preset.
+    # Real DSv4-Flash uses topk=512; "reduced" path uses 4 for sanity smoke.
+    _preset = os.environ.get("MILES_E2E_SHAPE", "reduced")
+    if _preset == "real":
+        attn.index_topk = 512
+        SEQ = 2048  # SKV must be >= topk; matches production tilelang smoke
+    else:
+        attn.index_topk = 4
+        SEQ = 16
     BSZ = 1
     hidden_states = (torch.randn(SEQ, BSZ, cfg.hidden_size, dtype=torch.bfloat16) * 0.1).npu()
 
