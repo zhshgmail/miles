@@ -134,14 +134,16 @@ def sparse_mla_fwd(
             new_max = T.alloc_fragment([block_M, 1], accum_dtype)
             scales = T.alloc_fragment([block_M, block_N], accum_dtype)
             idx_buf = T.alloc_fragment([block_N], idx_dtype)
-            # R-KA-16 E5-style: expand `correction [block_M, 1]` to full
-            # `[block_M, D]` shape via Python scalar-fill immediately before
-            # the `acc_o = correction * acc_o` step. Without this, the
-            # broadcast vmul over `acc_o [block_M, D]` and `correction
-            # [block_M, 1]` lowers to a NaN-producing op when the loop runs
-            # more than one iter (NS >= 2 at production topk=512 / block_N=64).
+            # R-KA-16 partial mitigation (AscendNPU-IR issue #251):
+            # explicitly broadcast `correction [block_M, 1]` to full
+            # `[block_M, D]` via Python serial fill immediately before the
+            # `acc_o = correction * acc_o` step. Without this, the broadcast
+            # vmul produces NaN on the cross-iter persistent `acc_o` once the
+            # online-softmax loop has more than one iter. Compiler-side root
+            # fix tracked under T6-T9 in workspace/T32_tilelang_rescue/
+            # ROADMAP.md; until that lands we additionally force num_stages=1
+            # at the dispatcher (sparse_mla.py:71-87).
             correction_expanded = T.alloc_fragment([block_M, D], accum_dtype)
-            new_max_expanded = T.alloc_fragment([block_M, block_N], accum_dtype)
 
             local_sm_scale = sm_scale
             value_zero = 0
