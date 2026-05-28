@@ -83,7 +83,59 @@ torch.cuda.Stream = torch.npu.Stream  # type: ignore[assignment]
 torch.cuda.current_stream = lambda device=None: torch.npu.current_stream(device)  # type: ignore[assignment]
 torch.cuda.default_stream = lambda device=None: torch.npu.default_stream(device)  # type: ignore[assignment]
 
+
+# miles' glm5 imports `apex.transformer.functional.fused_apply_rotary_pos_emb_thd`
+# directly. Inject a sys.modules stub that returns a pure-torch implementation.
+def _torch_apply_rotary_pos_emb_thd(t, cu_seqlens, rotary_pos_emb):  # pragma: no cover
+    """Pure-torch fallback for apex's `fused_apply_rotary_pos_emb_thd`.
+
+    `t`: [total_tokens, num_heads, head_dim]
+    `cu_seqlens`: cumulative-seqlens (1-D)
+    `rotary_pos_emb`: cosines/sines or interleaved rotary embedding;
+        shape [max_seqlen, 1, 1, head_dim] (Megatron convention).
+
+    The official apex impl applies a per-token rotary based on the token's
+    position within its sequence (derived from cu_seqlens). Re-derive the
+    position locally then call the standard rotary kernel.
+    """
+    import torch
+    # Derive per-token position index from cu_seqlens.
+    pos = torch.zeros(t.shape[0], dtype=torch.long, device=t.device)
+    for i in range(cu_seqlens.shape[0] - 1):
+        s = int(cu_seqlens[i].item())
+        e = int(cu_seqlens[i + 1].item())
+        pos[s:e] = torch.arange(0, e - s, device=t.device, dtype=torch.long)
+    # rotary_pos_emb expected shape [max_seqlen, 1, 1, head_dim]; gather per-pos.
+    head_dim = t.shape[-1]
+    rot = rotary_pos_emb.squeeze()  # [max_seqlen, head_dim]
+    rot = rot[pos]                  # [total_tokens, head_dim]
+    cos = rot.cos().to(t.dtype)
+    sin = rot.sin().to(t.dtype)
+    # Standard rotary: split last dim in half, rotate.
+    t1, t2 = t[..., : head_dim // 2], t[..., head_dim // 2 :]
+    rotated = torch.cat([-t2, t1], dim=-1)
+    return (t * cos.unsqueeze(1)) + (rotated * sin.unsqueeze(1))
+
+
+import sys as _sys
+import types as _types
+_apex_root = _types.ModuleType("apex")
+_apex_transformer = _types.ModuleType("apex.transformer")
+_apex_functional = _types.ModuleType("apex.transformer.functional")
+_apex_functional.fused_apply_rotary_pos_emb_thd = _torch_apply_rotary_pos_emb_thd
+_apex_transformer.functional = _apex_functional
+_apex_root.transformer = _apex_transformer
+_sys.modules.setdefault("apex", _apex_root)
+_sys.modules.setdefault("apex.transformer", _apex_transformer)
+_sys.modules.setdefault("apex.transformer.functional", _apex_functional)
+
 from megatron.core import parallel_state
+# Megatron's moe_utils.py guards `te_general_gemm is not None` without defining
+# it on the no-TE path, so the conditional raises NameError on first call.
+# Inject a None placeholder.
+import megatron.core.transformer.moe.moe_utils as _moe_utils  # noqa: E402
+if not hasattr(_moe_utils, "te_general_gemm"):
+    _moe_utils.te_general_gemm = None  # type: ignore[attr-defined]
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.tensor_parallel.layers import (
     ColumnParallelLinear as _BaseColumnParallelLinear,
@@ -178,11 +230,13 @@ def _build_config():
         num_attention_heads=16,  # H_MLA
         ffn_hidden_size=256,
         kv_channels=128,
-        # MLA-specific
+        # MLA-specific — sized so qk_head_dim + qk_pos_emb_head_dim == 576
+        # which is the miles `sparse_mla_fwd_interface` hard-coded
+        # dim_plus_tail_dim (d_v=512, tail=64).
         q_lora_rank=64,
         kv_lora_rank=64,
-        qk_head_dim=64,
-        qk_pos_emb_head_dim=16,  # rope head dim = D_TAIL
+        qk_head_dim=512,
+        qk_pos_emb_head_dim=64,
         v_head_dim=512,          # D_V (matches our sparse_mla d_v)
         # GLM-5 lighting indexer
         # index_num_attention_heads / index_head_dim are NOT MLATransformerConfig
@@ -204,9 +258,11 @@ def _build_config():
         # init_method / output_layer_init_method default to xavier in parent
         # cf. TransformerConfig __post_init__
     )
-    # Inject the indexer-side fields glm5 expects at `config.index_*`
+    # Inject the indexer-side fields glm5 expects at `config.index_*`.
+    # `index_head_dim` must be >= qk_pos_emb_head_dim (glm5 splits it as
+    # [index_head_dim - qk_pos_emb_head_dim, qk_pos_emb_head_dim]).
     cfg.index_num_attention_heads = 8
-    cfg.index_head_dim = 32
+    cfg.index_head_dim = 128  # = 64 (no-pe) + 64 (pe)
     return cfg
 
 
@@ -261,16 +317,18 @@ def main():
     ).npu()
     print(f"[rank {local_rank}] DSAMLASelfAttention built: {type(attn).__name__}")
     print(f"  params: {sum(p.numel() for p in attn.parameters()):,}")
+    # glm5 hardcodes self.index_topk = 2048 in __init__; override for smoke.
+    attn.index_topk = 4
 
     # Forward smoke.
-    SEQ = 8
+    SEQ = 16
     BSZ = 1
     hidden_states = (torch.randn(SEQ, BSZ, cfg.hidden_size, dtype=torch.bfloat16) * 0.1).npu()
 
     # Megatron's PackedSeqParams provides cu_seqlens_{q,kv} + max_seqlen_{q,kv}.
     from megatron.core.packed_seq_params import PackedSeqParams  # noqa: E402
 
-    cu_seqlens = torch.tensor([0, SEQ], dtype=torch.int32).npu()
+    cu_seqlens = torch.tensor([0, SEQ], dtype=torch.int32).npu()  # noqa: F811 (BSZ=1 contains one packed seq of length SEQ)
     packed = PackedSeqParams(
         cu_seqlens_q=cu_seqlens,
         cu_seqlens_kv=cu_seqlens,
