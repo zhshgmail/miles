@@ -117,6 +117,34 @@ class IndexerColumnParallelLinear(_BaseColumnParallelLinear):  # noqa: D401
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **_strip_te_kwargs(kwargs))
+
+
+class _LayerNormColumnParallelLinear(_BaseColumnParallelLinear):
+    """TE's `LayerNormColumnParallelLinear` replacement: fused (RMSNorm or
+    LayerNorm) + ColumnParallelLinear that exposes a `layer_norm_weight`
+    attribute matching what miles' GLM-5 expects to read at glm5.py:472.
+
+    Megatron's `LinearWithGradAccumulationAndAsyncCommunication` already
+    handles the linear half via ColumnParallelLinear; we add a learnable
+    per-input-channel norm scale (`layer_norm_weight`) and apply it before
+    the linear forward.
+    """
+
+    def __init__(self, input_size, output_size, *args, **kwargs):
+        # Drop TE-only kwargs.
+        kwargs = _strip_te_kwargs(kwargs)
+        super().__init__(input_size, output_size, *args, **kwargs)
+        # Add a learnable per-channel norm weight (RMSNorm style: just scale,
+        # no bias). Matches the shape miles touches at .layer_norm_weight.
+        self.layer_norm_weight = torch.nn.Parameter(torch.ones(input_size))
+        self._eps = 1e-6
+
+    def forward(self, input_, weight=None):  # type: ignore[override]
+        # RMSNorm: input * rsqrt(mean(input^2) + eps) * weight
+        x = input_.float()
+        rms = x.pow(2).mean(dim=-1, keepdim=True).add_(self._eps).rsqrt_()
+        x = (x * rms).to(input_.dtype) * self.layer_norm_weight.to(input_.dtype)
+        return super().forward(x, weight=weight)
 from megatron.core.transformer.enums import AttnMaskType
 from megatron.core.transformer.identity_op import IdentityOp
 from megatron.core.transformer.spec_utils import ModuleSpec
@@ -190,11 +218,13 @@ def main():
     print(f"[rank {local_rank}] cfg built: hidden={cfg.hidden_size} H={cfg.num_attention_heads} v_head_dim={cfg.v_head_dim}")
 
     # Build the submodules spec using pure Megatron-core (no TE/Apex).
+    # `linear_q_up_proj` and `linear_kv_up_proj` need a layer-norm-fused
+    # column-parallel linear to satisfy glm5.py's `.layer_norm_weight` read.
     submods = DSASelfAttentionSubmodules(
         linear_q_down_proj=ColumnParallelLinear,
-        linear_q_up_proj=ColumnParallelLinear,
+        linear_q_up_proj=_LayerNormColumnParallelLinear,
         linear_kv_down_proj=ColumnParallelLinear,
-        linear_kv_up_proj=ColumnParallelLinear,
+        linear_kv_up_proj=_LayerNormColumnParallelLinear,
         linear_v_up_proj=IdentityOp,
         core_attention=IdentityOp,    # we use SparseMLA directly, not the core
         linear_proj=RowParallelLinear,
