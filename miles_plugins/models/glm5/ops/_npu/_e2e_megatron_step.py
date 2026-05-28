@@ -85,7 +85,38 @@ torch.cuda.default_stream = lambda device=None: torch.npu.default_stream(device)
 
 from megatron.core import parallel_state
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
-from megatron.core.tensor_parallel.layers import ColumnParallelLinear, RowParallelLinear
+from megatron.core.tensor_parallel.layers import (
+    ColumnParallelLinear as _BaseColumnParallelLinear,
+    RowParallelLinear as _BaseRowParallelLinear,
+)
+
+
+# Thin TE-kwarg-stripping shims: miles' GLM-5 was authored against
+# TransformerEngine's Linear types and passes `parallel_mode="duplicated"`,
+# `skip_weight_param_allocation=False`, `tp_comm_buffer_name=...` to the
+# submodule constructors. Megatron-core's plain ColumnParallelLinear /
+# RowParallelLinear don't recognise those. Swallow them here.
+_TE_ONLY_KWARGS = {"parallel_mode", "skip_weight_param_allocation", "tp_comm_buffer_name"}
+
+
+def _strip_te_kwargs(kwargs):
+    return {k: v for k, v in kwargs.items() if k not in _TE_ONLY_KWARGS}
+
+
+# For q_down_proj / kv_down_proj / linear_proj miles' glm5 explicitly handles
+# `ColumnParallelLinear` and `RowParallelLinear` as known types and sets the
+# right kwargs itself; reuse the base classes there. For wq_b/wk/weights_proj
+# miles unconditionally passes `parallel_mode="duplicated"` etc., so wrap
+# the base with kwarg-stripping shims.
+ColumnParallelLinear = _BaseColumnParallelLinear
+RowParallelLinear = _BaseRowParallelLinear
+
+
+class IndexerColumnParallelLinear(_BaseColumnParallelLinear):  # noqa: D401
+    """TE-kwarg-stripping wrapper for the glm5 indexer-side projections."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **_strip_te_kwargs(kwargs))
 from megatron.core.transformer.enums import AttnMaskType
 from megatron.core.transformer.identity_op import IdentityOp
 from megatron.core.transformer.spec_utils import ModuleSpec
@@ -172,16 +203,24 @@ def main():
     )
     # The lighting-indexer-side projections (wq_b/wk/weights_proj) need real
     # parallel-linear weights (glm5.py touches `.weight._skip_gather`). k_norm
-    # is a layer norm. Use Megatron-core defaults — these are not TE.
-    from megatron.core.fusions.fused_layer_norm import FusedLayerNorm  # noqa: E402
+    # is a layer norm — use plain torch.nn.LayerNorm (Apex/FusedLayerNorm
+    # needs CUDA-only Apex install).
     if hasattr(submods, "wq_b"):
-        submods.wq_b = ColumnParallelLinear
+        submods.wq_b = IndexerColumnParallelLinear
     if hasattr(submods, "wk"):
-        submods.wk = ColumnParallelLinear
+        submods.wk = IndexerColumnParallelLinear
     if hasattr(submods, "weights_proj"):
-        submods.weights_proj = ColumnParallelLinear
+        submods.weights_proj = IndexerColumnParallelLinear
     if hasattr(submods, "k_norm"):
-        submods.k_norm = FusedLayerNorm
+        # glm5 calls k_norm(submodule, hidden_size=..., config=..., eps=...).
+        # torch.nn.LayerNorm doesn't accept config; wrap it to drop config.
+        import torch.nn as nn
+
+        class _LN(nn.LayerNorm):
+            def __init__(self, hidden_size, config=None, eps=1e-5, **kw):
+                super().__init__(hidden_size, eps=eps)
+
+        submods.k_norm = _LN
 
     print(f"[rank {local_rank}] instantiating DSAMLASelfAttention ...")
     attn = DSAMLASelfAttention(
@@ -197,8 +236,19 @@ def main():
     SEQ = 8
     BSZ = 1
     hidden_states = (torch.randn(SEQ, BSZ, cfg.hidden_size, dtype=torch.bfloat16) * 0.1).npu()
-    # cu_seqlens for varlen indexer: [0, SEQ] (single sample).
+
+    # Megatron's PackedSeqParams provides cu_seqlens_{q,kv} + max_seqlen_{q,kv}.
+    from megatron.core.packed_seq_params import PackedSeqParams  # noqa: E402
+
     cu_seqlens = torch.tensor([0, SEQ], dtype=torch.int32).npu()
+    packed = PackedSeqParams(
+        cu_seqlens_q=cu_seqlens,
+        cu_seqlens_kv=cu_seqlens,
+        max_seqlen_q=SEQ,
+        max_seqlen_kv=SEQ,
+        qkv_format="thd",
+    )
+    position_ids = torch.arange(SEQ, dtype=torch.int64).unsqueeze(0).npu()
 
     print(f"[rank {local_rank}] forward ...")
     try:
@@ -206,10 +256,13 @@ def main():
             hidden_states=hidden_states,
             attention_mask=None,
             inference_context=None,
-            rotary_pos_emb=None,
-            packed_seq_params=None,
+            packed_seq_params=packed,
+            position_ids=position_ids,
         )
-        print(f"  out type: {type(out)}, content: {out}")
+        if isinstance(out, tuple):
+            print(f"  out tuple, lens: {[t.shape if hasattr(t,'shape') else type(t) for t in out]}")
+        else:
+            print(f"  out shape: {out.shape}")
     except Exception as e:
         print(f"  FAILED at forward: {type(e).__name__}: {e}")
         import traceback
