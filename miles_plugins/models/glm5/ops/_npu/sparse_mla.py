@@ -143,8 +143,24 @@ def npu_sparse_mla_bwd(
     # topk, block_size=32, num_stages=1) — sm_scale + is_casual + kv_group are
     # not parameters (kv_group=1 baked in; sm_scale auto from D+DT; causal mask
     # via indices ordering). block_size must divide topk.
-    block_size = min(32, topk)
-    while topk % block_size != 0:
+    #
+    # block_size (BS) drives most of the UB pressure:
+    #   acc_dkv [BS, d_v] fp32         = 4 * BS * d_v bytes
+    #   acc_dkv_shared [BS, d_v] fp32  = 4 * BS * d_v bytes
+    #   KV_shared [BS, d_v] fp16       = 2 * BS * d_v bytes
+    # For real DSv4 (d_v=512), at BS=32 these three alone are 160 KB and the
+    # total kernel goes to ~289 KB (well past the 192 KB UB). T3 measured:
+    #   BS=32 -> 289280 B (FAIL CheckUBBudget, FAIL bishengir ub overflow)
+    #   BS=16 -> 189888 B (above 80% soft budget, but bishengir still compiles)
+    #   BS=8  -> 140192 B (below 80% soft budget — comfortable margin)
+    # We pick BS=8 whenever d_v >= 512 to stay under the soft budget; smaller
+    # d_v keeps BS=32 for less kernel-launch overhead. The minimum BS is 4
+    # (cube-native granularity), never go below.
+    if d_v >= 512:
+        block_size = min(8, topk)
+    else:
+        block_size = min(32, topk)
+    while topk % block_size != 0 and block_size > 4:
         block_size //= 2
     # Pick block_H_inner to match the fwd kernel's UB-fitting split.
     block_H_inner = 16 if H % 16 == 0 and H > 16 else H
@@ -159,7 +175,13 @@ def npu_sparse_mla_bwd(
     bwd_kernel(q4, kv4, do4, idx4, lse4, delta, dq, dkv)
     # postprocess cast dkv fp32 -> dtype. Signature: (B, S_kv, dim_plus_tail,
     # block_N=64). block_N must divide S_kv (first-port aligned assumption).
+    # UB pressure ~ (4 + 4 + 2) * block_N * (d_v + D_tail) — 10 bytes per
+    # row × block_N rows. At d_v=512, D_tail=64, block_N=64 → 368 KB (FAIL).
+    # Cap block_N so the cast kernel fits under ~80 KB.
     pp_block_N = 64
+    dim_plus_tail = d_v + D_tail
+    while pp_block_N > 1 and 10 * pp_block_N * dim_plus_tail > 80 * 1024:
+        pp_block_N //= 2
     while S_kv % pp_block_N != 0 and pp_block_N > 1:
         pp_block_N //= 2
     postprocess_kernel = _npu_postprocess(B, S_kv, d_v + D_tail, block_N=pp_block_N)
