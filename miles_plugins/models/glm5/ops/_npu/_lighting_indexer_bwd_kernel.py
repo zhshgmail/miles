@@ -48,17 +48,36 @@ def lighting_indexer_bwd(
     topk,
     block_I=32,
     num_stages=0,
+    block_H_inner=None,
 ):
     """Lighting indexer backward.
 
     Returns dIndexQ via out_idx=[-2]; dWeights and dIndexK are written
     in-place into caller-provided tensors.
+
+    Head-split (T33 T1):
+      The kernel allocates several `[block_I, pad_heads] fp32` and
+      `[pad_heads, index_dim] fp32` fragments (`scores`, `gated`,
+      `d_w_block`, `d_q`, ...). At real DSv4-Flash shapes (H=64,
+      D=128, BI=32) those alone request ~259 KB of UB — over the
+      192 KB dav-c220 budget. Pass `block_H_inner` to split the head
+      dim: the kernel grid becomes `seq_len * (heads // block_H_inner)`
+      and each NPU block only ever materialises `block_H_inner` heads
+      worth of fragments. With `block_H_inner=16` at H=64 the
+      per-block UB request drops by ~4x and the kernel fits.
     """
     dtype = "bfloat16"  # miles uses bf16
     accum_dtype = "float32"
     idx_dtype = "int32"
 
     pad_heads = max(heads, 16)
+    if block_H_inner is None:
+        block_H_inner = pad_heads
+    assert pad_heads % block_H_inner == 0, (
+        f"block_H_inner={block_H_inner} must divide pad_heads={pad_heads}"
+    )
+    head_groups = pad_heads // block_H_inner
+    # All subsequent allocations are per head-group.
     NS = (topk + block_I - 1) // block_I
     assert topk % block_I == 0, "topk must be a multiple of block_I"
 
@@ -82,59 +101,69 @@ def lighting_indexer_bwd(
         dWeights: T.Tensor(dw_shape, accum_dtype),
         dIndexK: T.Tensor(dk_shape, accum_dtype),
     ):
-        with T.Kernel(seq_len, is_npu=True) as (bx, _):
-            q_shared = T.alloc_shared([pad_heads, index_dim], dtype)
-            w_shared_flat = T.alloc_shared([pad_heads], accum_dtype)
-            w_frag = T.alloc_fragment([pad_heads, 1], accum_dtype)
+        # Grid: seq_len * head_groups. Each NPU block owns one
+        # (seq, head-group) cell and processes `block_H_inner` heads.
+        # This keeps per-block UB footprint bounded by block_H_inner,
+        # not by the model's full head count (avoids the H=64 / 259 KB
+        # overflow at real DSv4 shapes).
+        with T.Kernel(seq_len * head_groups, is_npu=True) as (cid, _):
+            bx = cid // head_groups          # seq position
+            hg_i = cid % head_groups          # head-group within this seq
+            h_start = hg_i * block_H_inner    # H offset for this head-tile
+
+            q_shared = T.alloc_shared([block_H_inner, index_dim], dtype)
+            w_shared_flat = T.alloc_shared([block_H_inner], accum_dtype)
+            w_frag = T.alloc_fragment([block_H_inner, 1], accum_dtype)
             k_shared = T.alloc_shared([block_I, index_dim], dtype)
             k_frag = T.alloc_fragment([block_I, index_dim], accum_dtype)
             idx_frag = T.alloc_fragment([block_I], idx_dtype)
             grad_frag = T.alloc_fragment([block_I, 1], accum_dtype)
             grad_shared_1xBI = T.alloc_shared([1, block_I], accum_dtype)
 
-            scores = T.alloc_fragment([block_I, pad_heads], accum_dtype)
-            scores_relu = T.alloc_fragment([block_I, pad_heads], accum_dtype)
-            mask = T.alloc_fragment([block_I, pad_heads], accum_dtype)
-            mask_big = T.alloc_fragment([block_I, pad_heads], accum_dtype)
-            one_buf = T.alloc_fragment([block_I, pad_heads], accum_dtype)
-            zeros_BIxH = T.alloc_fragment([block_I, pad_heads], accum_dtype)
-            zeros_HxD = T.alloc_fragment([pad_heads, index_dim], accum_dtype)
+            scores = T.alloc_fragment([block_I, block_H_inner], accum_dtype)
+            scores_relu = T.alloc_fragment([block_I, block_H_inner], accum_dtype)
+            mask = T.alloc_fragment([block_I, block_H_inner], accum_dtype)
+            mask_big = T.alloc_fragment([block_I, block_H_inner], accum_dtype)
+            one_buf = T.alloc_fragment([block_I, block_H_inner], accum_dtype)
+            zeros_BIxH = T.alloc_fragment([block_I, block_H_inner], accum_dtype)
+            zeros_HxD = T.alloc_fragment([block_H_inner, index_dim], accum_dtype)
             zeros_BIxD = T.alloc_fragment([block_I, index_dim], accum_dtype)
 
-            d_q = T.alloc_fragment([pad_heads, index_dim], accum_dtype)
-            d_q_out_shared = T.alloc_shared([pad_heads, index_dim], dtype)
-            d_w_acc = T.alloc_fragment([pad_heads, 1], accum_dtype)
-            d_w_shared = T.alloc_shared([pad_heads, 1], accum_dtype)
+            d_q = T.alloc_fragment([block_H_inner, index_dim], accum_dtype)
+            d_q_out_shared = T.alloc_shared([block_H_inner, index_dim], dtype)
+            d_w_acc = T.alloc_fragment([block_H_inner, 1], accum_dtype)
+            d_w_shared = T.alloc_shared([block_H_inner, 1], accum_dtype)
             d_k = T.alloc_fragment([block_I, index_dim], accum_dtype)
             d_k_shared = T.alloc_shared([block_I, index_dim], accum_dtype)
-            d_w_block = T.alloc_fragment([block_I, pad_heads], accum_dtype)
-            gated = T.alloc_fragment([block_I, pad_heads], accum_dtype)
-            grad_broadcast = T.alloc_fragment([block_I, pad_heads], accum_dtype)
-            weights_broadcast = T.alloc_fragment([block_I, pad_heads], accum_dtype)
+            d_w_block = T.alloc_fragment([block_I, block_H_inner], accum_dtype)
+            gated = T.alloc_fragment([block_I, block_H_inner], accum_dtype)
+            grad_broadcast = T.alloc_fragment([block_I, block_H_inner], accum_dtype)
+            weights_broadcast = T.alloc_fragment([block_I, block_H_inner], accum_dtype)
 
             value_zero = 0
             # hoist all shared/fragment allocs outside the inner loop
-            gated_shared = T.alloc_shared([block_I, pad_heads], dtype)
-            d_w_shared_1xH = T.alloc_shared([1, pad_heads], accum_dtype)
+            gated_shared = T.alloc_shared([block_I, block_H_inner], dtype)
+            d_w_shared_1xH = T.alloc_shared([1, block_H_inner], accum_dtype)
             T.vbrc(value_zero, zeros_BIxH)
             T.vbrc(value_zero, zeros_HxD)
             T.vbrc(value_zero, zeros_BIxD)
             T.vbrc(value_zero, d_q)
             T.vbrc(value_zero, d_w_acc)
 
-            # Load Q row into shared (pad_heads-shape, leave [heads:] zero)
-            # We exploit that input padding is handled by writing only the first
-            # `heads` rows from IndexQ; the rest is zero from the initial vbrc.
-            # For simplicity here, we copy the whole [heads, D] block and assume
-            # pad_heads == heads (which is the common case where H in {8,16,32,64}).
-            # Rank-reduce from 3D IndexQ to 2D q_shared via scalar bx + 2 slices,
-            # matching the working pattern in P1.3 sparse_mla_fwd
-            # (`T.copy(Q[b_i, s_i, 0:BM, 0:D], Q_shared)`).
-            T.copy(IndexQ[bx, 0:pad_heads, 0:index_dim], q_shared)
-            # Load weights — rank-reduce 2D Weights[bx, :H] into a 1D-shape via direct copy
-            T.copy(Weights[bx, 0:pad_heads], w_shared_flat)
-            # Promote 1D w_shared_flat to 2D w_frag[H, 1] by element copy (small loop)
-            for h in T.serial(pad_heads):
+            # Load Q rows for THIS head-group only:
+            # IndexQ[bx, h_start : h_start + block_H_inner, :] → q_shared
+            T.copy(
+                IndexQ[bx, h_start : h_start + block_H_inner, 0:index_dim],
+                q_shared,
+            )
+            # Load weights for THIS head-group:
+            # Weights[bx, h_start : h_start + block_H_inner] → w_shared_flat
+            T.copy(
+                Weights[bx, h_start : h_start + block_H_inner],
+                w_shared_flat,
+            )
+            # Promote 1D w_shared_flat to 2D w_frag[block_H_inner, 1]
+            for h in T.serial(block_H_inner):
                 w_frag[h, 0] = w_shared_flat[h]
 
             idx_shared_1xBI = T.alloc_shared([1, block_I], idx_dtype)
@@ -187,21 +216,21 @@ def lighting_indexer_bwd(
                 # This is mathematically equivalent: relu(s) > 0 iff s > 0,
                 # AND on the 0 case the product is 0 anyway.
 
-                # Broadcast OGrad[k] over heads axis -> grad_broadcast[block_I, H]
+                # Broadcast OGrad[k] over heads axis -> grad_broadcast[block_I, block_H_inner]
                 for i in T.serial(block_I):
-                    for h_idx in T.serial(pad_heads):
+                    for h_idx in T.serial(block_H_inner):
                         grad_broadcast[i, h_idx] = grad_frag[i, 0]
 
-                # Broadcast Weights[h] over block_I axis -> weights_broadcast[block_I, H]
+                # Broadcast Weights[h] over block_I axis -> weights_broadcast[block_I, block_H_inner]
                 for i in T.serial(block_I):
-                    for h_idx in T.serial(pad_heads):
+                    for h_idx in T.serial(block_H_inner):
                         weights_broadcast[i, h_idx] = w_frag[h_idx, 0]
 
                 # d_w[k, h] = grad[k] * relu(scores[k,h])
                 T.vmul(grad_broadcast, scores_relu, d_w_block)
                 # Reduce over block_I dim into d_w_acc[h]
                 for i in T.serial(block_I):
-                    for h_idx in T.serial(pad_heads):
+                    for h_idx in T.serial(block_H_inner):
                         d_w_acc[h_idx, 0] = d_w_acc[h_idx, 0] + d_w_block[i, h_idx]
 
                 # Correct gradient: gated = grad * mask(scores>0) * weights
@@ -240,17 +269,21 @@ def lighting_indexer_bwd(
                             size=[4],
                         )
 
-            # Cast dQ and write back — rank-reduce 2D→3D-slice via scalar bx + 2 slices
+            # Cast dQ and write back only THIS head-group's rows.
             T.vcast(d_q, d_q_out_shared, round_mode="rint")
             T.copy(
-                d_q_out_shared[0:heads, 0:index_dim], dIndexQ[bx, 0:heads, 0:index_dim]
+                d_q_out_shared[0:block_H_inner, 0:index_dim],
+                dIndexQ[bx, h_start : h_start + block_H_inner, 0:index_dim],
             )
 
-            # Write dW — transpose [H,1] → [1,H] and tile-copy
+            # Write dW for THIS head-group — transpose [block_H_inner,1] → [1,block_H_inner].
             T.copy(d_w_acc, d_w_shared)
-            for h in T.serial(pad_heads):
+            for h in T.serial(block_H_inner):
                 d_w_shared_1xH[0, h] = d_w_shared[h, 0]
-            T.copy(d_w_shared_1xH[0:1, 0:heads], dWeights[bx : bx + 1, 0:heads])
+            T.copy(
+                d_w_shared_1xH[0:1, 0:block_H_inner],
+                dWeights[bx : bx + 1, h_start : h_start + block_H_inner],
+            )
 
     return main
 

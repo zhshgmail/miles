@@ -92,8 +92,16 @@ def npu_indexer_bwd_interface(index_q, weights, index_k, topk_indices, grad_scor
 
     # R-KA-14 work-around: per-seq-position SEQ=1 call.
     block_I = _largest_pow2_divisor(k_top, cap=32)
+    # T33 T1 head-split: at real DSv4-Flash shapes (H=64, D=128, BI=32) the
+    # per-block UB request (scores / gated / d_w_block etc., each
+    # [BI, pad_heads] fp32 + d_q [pad_heads, D] fp32 …) overflows the
+    # 192 KB dav-c220 UB by ~67 KB. When heads is a multiple of 16 and > 16,
+    # split heads into groups of 16: grid becomes seq_len * (heads/16) and
+    # each NPU block only allocates `block_H_inner=16` heads worth of state.
+    block_H_inner = 16 if head_num > 16 and head_num % 16 == 0 else head_num
     kernel = lighting_indexer_bwd(
-        seq_len=1, seq_len_kv=seq_len_kv, heads=head_num, index_dim=head_dim, topk=k_top, block_I=block_I
+        seq_len=1, seq_len_kv=seq_len_kv, heads=head_num, index_dim=head_dim,
+        topk=k_top, block_I=block_I, block_H_inner=block_H_inner,
     )
 
     # weights shape is [seq, heads] (miles squeezed in caller); ensure 2D.
