@@ -1,5 +1,5 @@
 diff --git a/megatron/core/activations.py b/megatron/core/activations.py
-index 8b422d73a..58fba4667 100644
+index 8b422d7..58fba46 100644
 --- a/megatron/core/activations.py
 +++ b/megatron/core/activations.py
 @@ -5,19 +5,19 @@ import torch.nn.functional as F
@@ -26,7 +26,7 @@ index 8b422d73a..58fba4667 100644
      """Fast GELU activation"""
      return 0.5 * x * (1.0 + torch.tanh(x * 0.7978845608 * (1.0 + 0.044715 * x * x)))
 diff --git a/megatron/core/fusions/fused_bias_dropout.py b/megatron/core/fusions/fused_bias_dropout.py
-index 336452562..614ee1a48 100644
+index 3364525..614ee1a 100644
 --- a/megatron/core/fusions/fused_bias_dropout.py
 +++ b/megatron/core/fusions/fused_bias_dropout.py
 @@ -64,14 +64,14 @@ def bias_dropout_add_unfused(training):
@@ -47,7 +47,7 @@ index 336452562..614ee1a48 100644
      x_with_bias: Tuple[torch.Tensor, Optional[torch.Tensor]], residual: torch.Tensor, prob: float
  ) -> torch.Tensor:
 diff --git a/megatron/core/fusions/fused_bias_geglu.py b/megatron/core/fusions/fused_bias_geglu.py
-index 7a7fbe7f9..f9a438953 100644
+index 7a7fbe7..f9a4389 100644
 --- a/megatron/core/fusions/fused_bias_geglu.py
 +++ b/megatron/core/fusions/fused_bias_geglu.py
 @@ -13,7 +13,7 @@ from megatron.core.jit import jit_fuser
@@ -148,7 +148,7 @@ index 7a7fbe7f9..f9a438953 100644
      """Backward helper for weighted Quick-GEGLU with bias.
  
 diff --git a/megatron/core/fusions/fused_bias_gelu.py b/megatron/core/fusions/fused_bias_gelu.py
-index 8cc90f617..fda8f2f5f 100644
+index 8cc90f6..fda8f2f 100644
 --- a/megatron/core/fusions/fused_bias_gelu.py
 +++ b/megatron/core/fusions/fused_bias_gelu.py
 @@ -13,7 +13,7 @@ from megatron.core.jit import jit_fuser
@@ -170,7 +170,7 @@ index 8cc90f617..fda8f2f5f 100644
      x = bias + y
      tanh_out = torch.tanh(0.79788456 * x * (1 + 0.044715 * x * x))
 diff --git a/megatron/core/fusions/fused_bias_swiglu.py b/megatron/core/fusions/fused_bias_swiglu.py
-index 632470876..105936786 100644
+index 6324708..1059367 100644
 --- a/megatron/core/fusions/fused_bias_swiglu.py
 +++ b/megatron/core/fusions/fused_bias_swiglu.py
 @@ -12,7 +12,7 @@ from megatron.core.utils import nvtx_decorator
@@ -228,7 +228,7 @@ index 632470876..105936786 100644
      input_dtype = y.dtype
      w_dtype = weights.dtype
 diff --git a/megatron/core/fusions/fused_cross_entropy.py b/megatron/core/fusions/fused_cross_entropy.py
-index 23e4b6031..4d447e0e0 100644
+index 23e4b60..4d447e0 100644
 --- a/megatron/core/fusions/fused_cross_entropy.py
 +++ b/megatron/core/fusions/fused_cross_entropy.py
 @@ -9,7 +9,7 @@ from megatron.core.tensor_parallel.cross_entropy import VocabParallelCrossEntrop
@@ -268,7 +268,7 @@ index 23e4b6031..4d447e0e0 100644
      softmax: torch.Tensor,
      grad_output: torch.Tensor,
 diff --git a/megatron/core/fusions/fused_pad_routing_map.py b/megatron/core/fusions/fused_pad_routing_map.py
-index c382178b6..563279edd 100644
+index c382178..563279e 100644
 --- a/megatron/core/fusions/fused_pad_routing_map.py
 +++ b/megatron/core/fusions/fused_pad_routing_map.py
 @@ -70,7 +70,7 @@ def _pad_routing_map_kernel(
@@ -281,7 +281,7 @@ index c382178b6..563279edd 100644
      """Fused version of pad_routing_map.
      Args:
 diff --git a/megatron/core/fusions/fused_weighted_squared_relu.py b/megatron/core/fusions/fused_weighted_squared_relu.py
-index 02dabc14c..137022386 100644
+index 02dabc1..1370223 100644
 --- a/megatron/core/fusions/fused_weighted_squared_relu.py
 +++ b/megatron/core/fusions/fused_weighted_squared_relu.py
 @@ -10,7 +10,7 @@ from megatron.core.utils import nvtx_decorator
@@ -311,8 +311,26 @@ index 02dabc14c..137022386 100644
  def weighted_squared_relu_back(g: torch.Tensor, x: torch.Tensor, weights: torch.Tensor):
      """Backward for weighted Squared-ReLU.
  
+diff --git a/megatron/core/inference/contexts/dynamic_context.py b/megatron/core/inference/contexts/dynamic_context.py
+index 2b241c8..cca4503 100644
+--- a/megatron/core/inference/contexts/dynamic_context.py
++++ b/megatron/core/inference/contexts/dynamic_context.py
+@@ -51,12 +51,8 @@ try:
+ except:
+     HAVE_PACKAGING = False
+ 
+-try:
+-    import flashinfer  # pylint: disable=unused-import
+ 
+-    HAVE_FLASHINFER = True
+-except ImportError:
+-    HAVE_FLASHINFER = False
++HAVE_FLASHINFER = False
+ 
+ try:
+     from torch_memory_saver import torch_memory_saver
 diff --git a/megatron/core/models/gpt/gpt_layer_specs.py b/megatron/core/models/gpt/gpt_layer_specs.py
-index 712793853..76ea4333b 100755
+index 581e3fb..cf7acc7 100755
 --- a/megatron/core/models/gpt/gpt_layer_specs.py
 +++ b/megatron/core/models/gpt/gpt_layer_specs.py
 @@ -219,7 +219,7 @@ def get_gpt_layer_with_transformer_engine_spec(
@@ -325,36 +343,36 @@ index 712793853..76ea4333b 100755
          assert HAVE_KITCHEN
          backend: BackendSpecProvider = KitchenSpecProvider(
 diff --git a/megatron/core/ssm/gated_delta_net.py b/megatron/core/ssm/gated_delta_net.py
-index dfa6e4c35..8b3621819 100644
+index 601a72a..5a70e57 100644
 --- a/megatron/core/ssm/gated_delta_net.py
 +++ b/megatron/core/ssm/gated_delta_net.py
-@@ -413,7 +413,7 @@ class GatedDeltaNet(MegatronModule):
+@@ -465,7 +465,7 @@ class GatedDeltaNet(MegatronModule):
  
          return out, out_bias
  
 -    @jit_fuser
-+    
++
      def _apply_gated_norm(self, x, gate):
          # Output Norm
          x_dtype = x.dtype
 diff --git a/megatron/core/transformer/attention.py b/megatron/core/transformer/attention.py
-index 80e9ec6fc..b6bcef6a9 100644
+index cc5ab22..983ebd3 100644
 --- a/megatron/core/transformer/attention.py
 +++ b/megatron/core/transformer/attention.py
-@@ -1026,7 +1026,7 @@ class Attention(MegatronModule, ABC):
+@@ -1345,7 +1345,7 @@ class Attention(MegatronModule, ABC):
  
          return output, bias
  
 -    @jit_fuser
-+    
++
      def _apply_output_gate(self, x, gate):
          x_dtype = x.dtype
          gate = gate.contiguous()
 diff --git a/megatron/core/transformer/module.py b/megatron/core/transformer/module.py
-index 2330df91b..0446c9097 100644
+index 056aef6..10c8b6e 100644
 --- a/megatron/core/transformer/module.py
 +++ b/megatron/core/transformer/module.py
-@@ -16,9 +16,9 @@ from megatron.core.transformer.utils import (
+@@ -17,9 +17,9 @@ from megatron.core.transformer.utils import (
      sharded_state_dict_default,
  )
  
@@ -368,55 +386,54 @@ index 2330df91b..0446c9097 100644
  
  def param_is_not_shared(param):  # pylint: disable=missing-function-docstring
 diff --git a/megatron/core/transformer/moe/experts.py b/megatron/core/transformer/moe/experts.py
-index 5eeafdd8d..a4dce6970 100644
+index d8e7534..e434ce1 100644
 --- a/megatron/core/transformer/moe/experts.py
 +++ b/megatron/core/transformer/moe/experts.py
-@@ -91,7 +91,7 @@ class GroupedMLP(MegatronModule):
+@@ -92,7 +92,7 @@ class GroupedMLP(MegatronModule):
              if self.config.activation_func not in (F.silu, F.gelu):
                  raise ValueError("Activation function must be silu or gelu when using GroupedMLP.")
  
 -            @jit_fuser
-+            
++
              def glu(x):
                  x = torch.chunk(x, 2, dim=-1)
                  return self.config.activation_func(x[0]) * x[1]
-@@ -108,7 +108,7 @@ class GroupedMLP(MegatronModule):
+@@ -109,7 +109,7 @@ class GroupedMLP(MegatronModule):
                  "moe_act recompute for fp8 or fp4 cannot work with the legacy GroupedMLP."
              )
  
 -        @jit_fuser
-+        
++
          def activation_func_with_probs(x, probs):
              dtype = x.dtype
              res = self.activation_func(x) * probs
 diff --git a/megatron/core/transformer/moe/router.py b/megatron/core/transformer/moe/router.py
-index 517944f25..2c5bc0728 100644
+index 9805707..d592e16 100644
 --- a/megatron/core/transformer/moe/router.py
 +++ b/megatron/core/transformer/moe/router.py
-@@ -472,7 +472,7 @@ class TopKRouter(Router):
+@@ -579,7 +579,6 @@ class TopKRouter(Router):
          else:
              return input
  
 -    @jit_fuser
-+    
-     def _apply_expert_bias(self, routing_map: torch.Tensor):
-         """
-         Update expert bias and tokens_per_expert
+     def _apply_expert_bias(
+         self, routing_map: torch.Tensor, padding_mask: Optional[torch.Tensor] = None
+     ):
 diff --git a/megatron/core/transformer/moe/token_dispatcher.py b/megatron/core/transformer/moe/token_dispatcher.py
-index d0da38d63..6d092c88f 100644
+index 327dbc8..a572699 100644
 --- a/megatron/core/transformer/moe/token_dispatcher.py
 +++ b/megatron/core/transformer/moe/token_dispatcher.py
-@@ -1403,7 +1403,7 @@ class MoEFlexTokenDispatcher(MoETokenDispatcher):
+@@ -1402,7 +1402,7 @@ class MoEFlexTokenDispatcher(MoETokenDispatcher):
          ).contiguous()
          return routing_map, probs
  
 -    @jit_fuser
-+    
++
      def dispatch_preprocess(
          self, hidden_states: torch.Tensor, routing_map: torch.Tensor, probs: torch.Tensor
      ):
 diff --git a/megatron/core/transformer/torch_norm.py b/megatron/core/transformer/torch_norm.py
-index d0ceca7af..f16796680 100644
+index d0ceca7..a834a49 100644
 --- a/megatron/core/transformer/torch_norm.py
 +++ b/megatron/core/transformer/torch_norm.py
 @@ -69,7 +69,7 @@ class L2Norm(torch.nn.Module):
@@ -424,12 +441,12 @@ index d0ceca7af..f16796680 100644
          self.eps = eps
  
 -    @jit_fuser
-+    
++
      def _norm(self, x):
          """
          Performs the actual L2 normalization.
 diff --git a/megatron/core/transformer/utils.py b/megatron/core/transformer/utils.py
-index 880c53099..dbc95736e 100644
+index 880c530..dbc9573 100644
 --- a/megatron/core/transformer/utils.py
 +++ b/megatron/core/transformer/utils.py
 @@ -51,7 +51,7 @@ def attention_mask_func(attention_scores, attention_mask):
@@ -451,7 +468,7 @@ index 880c53099..dbc95736e 100644
      return (
          x * 0.5 * (torch.erf(x / 1.41421).to(dtype=x.dtype) + torch.ones_like(x).to(dtype=x.dtype))
 diff --git a/megatron/legacy/model/fused_bias_gelu.py b/megatron/legacy/model/fused_bias_gelu.py
-index e00e63148..ffe4b7ec6 100644
+index e00e631..ffe4b7e 100644
 --- a/megatron/legacy/model/fused_bias_gelu.py
 +++ b/megatron/legacy/model/fused_bias_gelu.py
 @@ -12,7 +12,7 @@ from megatron.core.jit import jit_fuser
@@ -473,7 +490,7 @@ index e00e63148..ffe4b7ec6 100644
      x = bias + y
      tanh_out = torch.tanh(0.79788456 * x * (1 + 0.044715 * x * x))
 diff --git a/megatron/legacy/model/transformer.py b/megatron/legacy/model/transformer.py
-index 2a662a55b..2fc3e1bfb 100644
+index ca3414e..5dd9e47 100644
 --- a/megatron/legacy/model/transformer.py
 +++ b/megatron/legacy/model/transformer.py
 @@ -856,7 +856,7 @@ def get_bias_dropout_add(training):
@@ -495,7 +512,7 @@ index 2a662a55b..2fc3e1bfb 100644
                                       bias: Optional[torch.Tensor],
                                       residual: torch.Tensor,
 diff --git a/megatron/legacy/model/utils.py b/megatron/legacy/model/utils.py
-index 5762000d5..534858df7 100644
+index 5762000..534858d 100644
 --- a/megatron/legacy/model/utils.py
 +++ b/megatron/legacy/model/utils.py
 @@ -43,7 +43,7 @@ def get_linear_layer(rows, columns, init_method):
@@ -515,23 +532,4 @@ index 5762000d5..534858df7 100644
 +
  def erf_gelu(x):
      return x * 0.5 * (torch.erf(x / 1.41421).to(dtype=x.dtype)+torch.ones_like(x).to(dtype=x.dtype))
-
-
-diff --git a/megatron/core/inference/contexts/dynamic_context.py b/megatron/core/inference/contexts/dynamic_context.py
-index 9b855effb..90c37c8db 100644
---- a/megatron/core/inference/contexts/dynamic_context.py
-+++ b/megatron/core/inference/contexts/dynamic_context.py
-@@ -49,12 +49,8 @@ try:
- except:
-     HAVE_PACKAGING = False
  
--try:
--    import flashinfer  # pylint: disable=unused-import
- 
--    HAVE_FLASHINFER = True
--except ImportError:
--    HAVE_FLASHINFER = False
-+HAVE_FLASHINFER = False
- 
- try:
-     import wandb  # pylint: disable=unused-import

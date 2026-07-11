@@ -10,7 +10,7 @@ This guide provides instructions for installing Miles with NPU support, includin
 | SGLang          | sglang-miles | [GitHub](https://github.com/sgl-project/sglang/)                                             |
 | SGL Kernel NPU  | 2026.05.01                               | [GitHub](https://github.com/sgl-project/sgl-kernel-npu/releases/tag/2026.05.01)                                     |
 | Megatron-Bridge | 07d61e1547a8356cc34928f7eb20226d2f9db3fa | [GitHub](https://github.com/radixark/Megatron-Bridge)                                                                |
-| Megatron-LM     | 3714d81d418c9f1bca4594fc35f9e8289f652862 | [GitHub](https://github.com/NVIDIA/Megatron-LM)                                                                     |
+| Megatron-LM     | 4716f75475c78e2fc2c6f0d3af095f1681b770b4 | [GitHub](https://github.com/radixark/Megatron-LM)                                                                   |
 | MindSpeed       | fc63de5c48426dd019c3b3f39e65f5bdf56e4086 | [GitCode](https://gitcode.com/Ascend/MindSpeed)                                                                     |
 | HDK             | 25.3.RC1                                 | [Ascend](https://www.hiascend.com/hardware/firmware-drivers/commercial?product=7\&model=33)                         |
 | CANN            | 8.5.0                                    | [Ascend](https://www.hiascend.com/developer/download/community/result?module=cann\&cann=8.5.0\&product=7\&model=33) |
@@ -92,8 +92,8 @@ pip install 'nvidia-modelopt[torch]>=0.37.0' --no-build-isolation
 
 ```shell
 cd <WORKSPACE>
-git clone https://github.com/NVIDIA/Megatron-LM.git --recursive && \
-  cd Megatron-LM/ && git checkout 3714d81d418c9f1bca4594fc35f9e8289f652862 && \
+git clone https://github.com/radixark/Megatron-LM.git --recursive && \
+  cd Megatron-LM/ && git checkout 4716f75475c78e2fc2c6f0d3af095f1681b770b4 && \
   pip install -e .
 ```
 
@@ -126,7 +126,6 @@ cd <WORKSPACE>/sglang
 git apply ../npu_patch/sglang.patch
 
 cd <WORKSPACE>/Megatron-LM
-git apply ../npu_patch/megatron_common.patch
 git apply ../npu_patch/megatron.patch
 
 cd <WORKSPACE>/Megatron-Bridge
