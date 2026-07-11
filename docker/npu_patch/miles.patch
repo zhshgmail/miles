@@ -1,5 +1,5 @@
 diff --git a/miles/backends/experimental/fsdp_utils/update_weight_utils.py b/miles/backends/experimental/fsdp_utils/update_weight_utils.py
-index 98000e7d3..94fb71da5 100644
+index 98000e7..94fb71d 100644
 --- a/miles/backends/experimental/fsdp_utils/update_weight_utils.py
 +++ b/miles/backends/experimental/fsdp_utils/update_weight_utils.py
 @@ -234,12 +234,12 @@ class UpdateWeightFromDistributed(UpdateWeight):
@@ -18,7 +18,7 @@ index 98000e7d3..94fb71da5 100644
                  world_size=world_size,
                  rank=0,
 diff --git a/miles/backends/megatron_utils/__init__.py b/miles/backends/megatron_utils/__init__.py
-index 879b689c8..2f30a4bbd 100644
+index 879b689..2f30a4b 100644
 --- a/miles/backends/megatron_utils/__init__.py
 +++ b/miles/backends/megatron_utils/__init__.py
 @@ -1,6 +1,7 @@
@@ -30,7 +30,7 @@ index 879b689c8..2f30a4bbd 100644
  try:
      import deep_ep
 diff --git a/miles/backends/megatron_utils/actor.py b/miles/backends/megatron_utils/actor.py
-index 54ca4b81a..3f79e49b7 100644
+index 54ca4b8..3f79e49 100644
 --- a/miles/backends/megatron_utils/actor.py
 +++ b/miles/backends/megatron_utils/actor.py
 @@ -39,12 +39,14 @@ from .parallel import verify_megatron_parallel_state
@@ -68,7 +68,7 @@ index 54ca4b81a..3f79e49b7 100644
              world_size=world_size,
              rank=0 if self.role == "actor" else 1,
 diff --git a/miles/backends/megatron_utils/initialize.py b/miles/backends/megatron_utils/initialize.py
-index dd3415c0a..15527171d 100644
+index dd3415c..1552717 100644
 --- a/miles/backends/megatron_utils/initialize.py
 +++ b/miles/backends/megatron_utils/initialize.py
 @@ -13,6 +13,7 @@ from miles.backends.training_utils.parallel import get_parallel_state, set_paral
@@ -80,30 +80,30 @@ index dd3415c0a..15527171d 100644
  
  def _set_random_seed(
 diff --git a/miles/backends/megatron_utils/model.py b/miles/backends/megatron_utils/model.py
-index 5d2503dab..69051ddc5 100644
+index 5d2503d..667051e 100644
 --- a/miles/backends/megatron_utils/model.py
 +++ b/miles/backends/megatron_utils/model.py
-@@ -142,6 +142,11 @@ def setup_model_and_optimizer(
-             kwargs[f.name] = getattr(args, f.name)
+@@ -143,6 +143,11 @@ def setup_model_and_optimizer(
      config = OptimizerConfig(**kwargs)
      config.timers = None
-+    
+ 
 +    for model_item in model:
 +        for name, param in model_item.named_parameters():
 +            if not param.is_leaf:
 +                print(f"ERROR: param {name} is non-leaf, grad_fn={param.grad_fn}")
- 
++
      optimizer = get_megatron_optimizer(
          config=config,
+         model_chunks=model,
 diff --git a/miles/backends/megatron_utils/model_provider.py b/miles/backends/megatron_utils/model_provider.py
-index 45adc8679..c6c307a11 100644
+index 45adc86..329c050 100644
 --- a/miles/backends/megatron_utils/model_provider.py
 +++ b/miles/backends/megatron_utils/model_provider.py
 @@ -110,6 +110,20 @@ def get_model_provider_func(
              provider.moe_router_bias_update_rate = args.moe_router_bias_update_rate
          if getattr(args, "moe_aux_loss_coeff", None) is not None:
              provider.moe_aux_loss_coeff = args.moe_aux_loss_coeff
-+        
++
 +        if getattr(args, "gradient_accumulation_fusion", None) is not None:
 +            provider.gradient_accumulation_fusion = args.gradient_accumulation_fusion
 +
@@ -121,7 +121,7 @@ index 45adc8679..c6c307a11 100644
  
          def wrapped_bridge_provider(
 diff --git a/miles/backends/megatron_utils/update_weight/common.py b/miles/backends/megatron_utils/update_weight/common.py
-index 677f93c62..79ee57664 100644
+index 677f93c..79ee576 100644
 --- a/miles/backends/megatron_utils/update_weight/common.py
 +++ b/miles/backends/megatron_utils/update_weight/common.py
 @@ -154,8 +154,8 @@ def named_params_and_buffers(
@@ -136,7 +136,7 @@ index 677f93c62..79ee57664 100644
      return x
  
 diff --git a/miles/backends/megatron_utils/update_weight/update_weight_from_distributed/broadcast.py b/miles/backends/megatron_utils/update_weight/update_weight_from_distributed/broadcast.py
-index 51afedac4..c31c04a46 100644
+index 51afeda..c31c04a 100644
 --- a/miles/backends/megatron_utils/update_weight/update_weight_from_distributed/broadcast.py
 +++ b/miles/backends/megatron_utils/update_weight/update_weight_from_distributed/broadcast.py
 @@ -129,12 +129,12 @@ def connect_rollout_engines_from_distributed(
@@ -155,7 +155,7 @@ index 51afedac4..c31c04a46 100644
          world_size=world_size,
          rank=0,
 diff --git a/miles/ray/actor_group.py b/miles/ray/actor_group.py
-index 669988b52..723113a69 100644
+index 669988b..723113a 100644
 --- a/miles/ray/actor_group.py
 +++ b/miles/ray/actor_group.py
 @@ -85,7 +85,9 @@ class RayTrainGroup:
@@ -184,7 +184,7 @@ index 669988b52..723113a69 100644
              if rank == 0:
                  master_addr, master_port = ray.get(actor.get_master_addr_and_port.remote())
 diff --git a/miles/ray/placement_group.py b/miles/ray/placement_group.py
-index bf8244b90..12442d9d6 100644
+index bf8244b..12442d9 100644
 --- a/miles/ray/placement_group.py
 +++ b/miles/ray/placement_group.py
 @@ -14,10 +14,12 @@ from .rollout import RolloutManager
@@ -242,7 +242,7 @@ index bf8244b90..12442d9d6 100644
  
      # calculate num_rollout from num_epoch
 diff --git a/miles/ray/rollout.py b/miles/ray/rollout.py
-index ded71b511..89f515c9d 100644
+index ded71b5..89f515c 100644
 --- a/miles/ray/rollout.py
 +++ b/miles/ray/rollout.py
 @@ -140,14 +140,15 @@ class ServerGroup:
@@ -275,7 +275,7 @@ index ded71b511..89f515c9d 100644
  
          self._metric_checker = MetricChecker.maybe_create(args)
 diff --git a/miles/ray/train_actor.py b/miles/ray/train_actor.py
-index a4145ca27..33340323e 100644
+index a4145ca..3334032 100644
 --- a/miles/ray/train_actor.py
 +++ b/miles/ray/train_actor.py
 @@ -20,10 +20,17 @@ logger = logging.getLogger(__name__)
@@ -299,7 +299,7 @@ index a4145ca27..33340323e 100644
  
  class TrainRayActor(RayActor):
 diff --git a/miles/utils/arguments.py b/miles/utils/arguments.py
-index abfa137ac..7c5fe007a 100644
+index abfa137..7c5fe00 100644
 --- a/miles/utils/arguments.py
 +++ b/miles/utils/arguments.py
 @@ -119,7 +119,7 @@ def get_miles_extra_args_provider(add_custom_arguments=None):
@@ -321,7 +321,7 @@ index abfa137ac..7c5fe007a 100644
          ),
          ("rope_theta", "rotary_base", equal),
 diff --git a/miles/utils/debug_utils/run_megatron/worker/main.py b/miles/utils/debug_utils/run_megatron/worker/main.py
-index 359a51c1d..78e697e7c 100644
+index 359a51c..78e697e 100644
 --- a/miles/utils/debug_utils/run_megatron/worker/main.py
 +++ b/miles/utils/debug_utils/run_megatron/worker/main.py
 @@ -117,9 +117,9 @@ def _parse_args() -> tuple[argparse.Namespace, WorkerScriptArgs]:
@@ -337,10 +337,10 @@ index 359a51c1d..78e697e7c 100644
      args.hf_checkpoint = str(args.script_hf_checkpoint)
      args.__dict__.setdefault("megatron_to_hf_mode", "raw")
 diff --git a/miles/utils/external_utils/command_utils.py b/miles/utils/external_utils/command_utils.py
-index d016e01ac..08b4d6eff 100644
+index d016e01..1b5f95c 100644
 --- a/miles/utils/external_utils/command_utils.py
 +++ b/miles/utils/external_utils/command_utils.py
-@@ -193,6 +193,112 @@ def execute_train(
+@@ -193,6 +193,122 @@ def execute_train(
          )
  
  
@@ -388,20 +388,30 @@ index d016e01ac..08b4d6eff 100644
 +        )
 +
 +    f = before_ray_job_submit
-+    if f is not None: 
++    if f is not None:
 +        f()
 +
++    ascend_runtime_env = {
++        key: value
++        for key, value in os.environ.items()
++        if value
++        and (
++            key.startswith(("ASCEND_", "ATB_"))
++            or key in {"LD_LIBRARY_PATH", "set_env_path"}
++        )
++    }
++    inherited_pythonpath = os.environ.get("PYTHONPATH")
++    ascend_runtime_env["PYTHONPATH"] = (
++        f"{megatron_path}:{inherited_pythonpath}"
++        if inherited_pythonpath
++        else megatron_path
++    )
 +    runtime_env_json = json.dumps(
 +        {
 +            "env_vars": {
 +                "CUDA_DEVICE_MAX_CONNECTIONS": "1",
 +                "RAY_EXPERIMENTAL_NOSET_ASCEND_RT_VISIBLE_DEVICES": "1",
-+                # Replace with actual Ascend toolkit paths
-+                "ASCEND_TOOLKIT_HOME": "/home/w00664509/ascend-toolkit/latest/",
-+                "ASCEND_OPP_PATH": "/home/w00664509/cann8.5.2/ascend-toolkit/latest/opp/",
-+                "ASCEND_AICPU_PATH": "/home/w00664509/cann8.5.2/ascend-toolkit/latest/",
-+                "ASCEND_HOME_PATH": "/home/w00664509/cann8.5.2/ascend-toolkit/latest/",
-+                "set_env_path": "/home/w00664509/cann8.5.2/nnal/atb/set_env.sh",
++                **ascend_runtime_env,
 +                "HYDRA_FULL_ERROR": "1",
 +                "HCCL_HOST_SOCKET_PORT_RANGE": "60000-60050",
 +                "HCCL_NPU_SOCKET_PORT_RANGE": "61000-61050",
@@ -454,7 +464,7 @@ index d016e01ac..08b4d6eff 100644
      try:
          return json.loads(text)
 diff --git a/miles/utils/ppo_utils.py b/miles/utils/ppo_utils.py
-index 4c09dc508..369d8fda5 100644
+index 4c09dc5..369d8fd 100644
 --- a/miles/utils/ppo_utils.py
 +++ b/miles/utils/ppo_utils.py
 @@ -10,7 +10,7 @@ import torch.nn.functional as F
@@ -485,7 +495,7 @@ index 4c09dc508..369d8fda5 100644
              return (a * b).sum(dim=-1, keepdim=True)
  
 diff --git a/miles/utils/reloadable_process_group.py b/miles/utils/reloadable_process_group.py
-index af4878b4e..f796a4ee7 100644
+index af4878b..f796a4e 100644
 --- a/miles/utils/reloadable_process_group.py
 +++ b/miles/utils/reloadable_process_group.py
 @@ -154,7 +154,7 @@ class ReloadableProcessGroup(torch.distributed.ProcessGroup):
@@ -498,7 +508,7 @@ index af4878b4e..f796a4ee7 100644
  
      def rank(self) -> int:
 diff --git a/miles/utils/tensor_backper.py b/miles/utils/tensor_backper.py
-index 2fc2a6359..6952d1fc1 100644
+index 2fc2a63..6952d1f 100644
 --- a/miles/utils/tensor_backper.py
 +++ b/miles/utils/tensor_backper.py
 @@ -110,6 +110,6 @@ def _compute_hash_tensor(x: torch.Tensor):
@@ -509,8 +519,51 @@ index 2fc2a6359..6952d1fc1 100644
 +    x = x.view(torch.int32)
      x = x.sum()
      return x.item()
+diff --git a/tests/test_npu_patch_runtime_env.py b/tests/test_npu_patch_runtime_env.py
+new file mode 100644
+index 0000000..90d9f2c
+--- /dev/null
++++ b/tests/test_npu_patch_runtime_env.py
+@@ -0,0 +1,37 @@
++import json
++import re
++
++from miles.utils.external_utils import command_utils
++
++
++def test_execute_train_npu_forwards_runtime_prefixes_and_megatron_path(monkeypatch):
++    commands = []
++    monkeypatch.setattr(
++        command_utils,
++        "get_bool_env_var",
++        lambda name, default="false": name == "SLIME_SCRIPT_ENABLE_RAY_SUBMIT",
++    )
++    monkeypatch.setattr(
++        command_utils,
++        "exec_command",
++        lambda command, *args, **kwargs: commands.append(command) or "",
++    )
++    monkeypatch.setattr(command_utils, "check_has_nvlink", lambda: False)
++    monkeypatch.setenv("ASCEND_CUSTOM_OPP_PATH", "/opt/ascend/custom")
++    monkeypatch.setenv("ATB_CUSTOM_PATH", "/opt/atb/custom")
++    monkeypatch.setenv("PYTHONPATH", "/opt/existing/python")
++
++    command_utils.execute_train_npu(
++        train_args="--mock-training",
++        num_gpus_per_node=1,
++        megatron_model_type="mock_model",
++        megatron_path="/workspace/Megatron-LM",
++    )
++
++    submit = commands[-1]
++    match = re.search(r"--runtime-env-json='([^']+)'", submit)
++    assert match is not None
++    env = json.loads(match.group(1))["env_vars"]
++    assert env["ASCEND_CUSTOM_OPP_PATH"] == "/opt/ascend/custom"
++    assert env["ATB_CUSTOM_PATH"] == "/opt/atb/custom"
++    assert env["PYTHONPATH"] == "/workspace/Megatron-LM:/opt/existing/python"
 diff --git a/tools/convert_hf_to_torch_dist.py b/tools/convert_hf_to_torch_dist.py
-index 250af0b68..8e407b471 100644
+index 250af0b..8e407b4 100644
 --- a/tools/convert_hf_to_torch_dist.py
 +++ b/tools/convert_hf_to_torch_dist.py
 @@ -17,6 +17,7 @@ from miles.backends.megatron_utils.model_provider import get_model_provider_func
@@ -555,7 +608,7 @@ index 250af0b68..8e407b471 100644
      save_checkpoint(1, model, None, None, 0)
  
 diff --git a/train.py b/train.py
-index 9a4a29550..0512bee06 100644
+index 9a4a295..0512bee 100644
 --- a/train.py
 +++ b/train.py
 @@ -8,6 +8,7 @@ from miles.utils.async_utils import eager_create_task

@@ -9,7 +9,7 @@ This guide provides instructions for installing Miles with NPU support, includin
 | Miles          | 551d15914c89b1229b76fe806ca5f5aa5a826309 | [GitHub](https://github.com/radixark/miles/tree/main)                                             |
 | SGLang          | sglang-miles | [GitHub](https://github.com/sgl-project/sglang/)                                             |
 | SGL Kernel NPU  | 2026.05.01                               | [GitHub](https://github.com/sgl-project/sgl-kernel-npu/releases/tag/2026.05.01)                                     |
-| Megatron-Bridge | bridge | [GitHub](https://github.com/radixark/Megatron-Bridge)                                                                |
+| Megatron-Bridge | 07d61e1547a8356cc34928f7eb20226d2f9db3fa | [GitHub](https://github.com/radixark/Megatron-Bridge)                                                                |
 | Megatron-LM     | 3714d81d418c9f1bca4594fc35f9e8289f652862 | [GitHub](https://github.com/NVIDIA/Megatron-LM)                                                                     |
 | MindSpeed       | fc63de5c48426dd019c3b3f39e65f5bdf56e4086 | [GitCode](https://gitcode.com/Ascend/MindSpeed)                                                                     |
 | HDK             | 25.3.RC1                                 | [Ascend](https://www.hiascend.com/hardware/firmware-drivers/commercial?product=7\&model=33)                         |
@@ -40,6 +40,10 @@ Prior to start work with miles on Ascend you need to install CANN Toolkit, Kerne
 source <CANN_PATH>/ascend-toolkit/set_env.sh
 source <CANN_PATH>/nnal/atb/set_env.sh
 ```
+
+The Miles NPU launcher forwards CANN and ATB variables from this caller environment into the Ray runtime.
+It does not invent machine-specific installation paths, so source the environment scripts before launching
+Miles or provide the equivalent `ASCEND_*` and `ATB_*` variables explicitly.
 
 ### PyTorch and PyTorch NPU
 
@@ -78,8 +82,10 @@ pip install output/torch_memory_saver*.whl
 pip install git+https://github.com/ISEEKYAN/mbridge.git@89eb10887887bc74853f89a4de258c0702932a1c --no-deps
 
 cd <WORKSPACE>
-git clone https://github.com/radixark/Megatron-Bridge.git -b bridge
-pip install nvidia-modelopt[torch]>=0.37.0 --no-build-isolation
+git clone https://github.com/radixark/Megatron-Bridge.git -b bridge && \
+  cd Megatron-Bridge/ && git checkout 07d61e1547a8356cc34928f7eb20226d2f9db3fa && \
+  pip install -e . --no-deps
+pip install 'nvidia-modelopt[torch]>=0.37.0' --no-build-isolation
 ```
 
 ### Megatron-LM
@@ -104,7 +110,8 @@ git clone https://gitcode.com/Ascend/MindSpeed.git && \
 
 ```shell
 cd <WORKSPACE>
-git clone https://github.com/radixark/miles.git && cd miles
+git clone https://github.com/radixark/miles.git && \
+  cd miles && git checkout 551d15914c89b1229b76fe806ca5f5aa5a826309
 cp -r docker/npu_patch ../npu_patch
 pip install -e .
 ```
@@ -123,7 +130,7 @@ git apply ../npu_patch/megatron_common.patch
 git apply ../npu_patch/megatron.patch
 
 cd <WORKSPACE>/Megatron-Bridge
-git apply ../npu_patch/megatron-bridge.patch
+git apply ../npu_patch/megatron_bridge.patch
 
 cd <WORKSPACE>/MindSpeed
 git apply ../npu_patch/mindspeed.patch
