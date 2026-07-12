@@ -18,7 +18,8 @@ diff --git a/src/megatron/bridge/models/conversion/model_bridge.py b/src/megatro
 index e3b0acaf4..fff135fdf 100644
 --- a/src/megatron/bridge/models/conversion/model_bridge.py
 +++ b/src/megatron/bridge/models/conversion/model_bridge.py
-@@ -1250,8 +1250,5 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
+@@ -1249,10 +1249,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
+             if task is None:
                  continue
              if isinstance(task.param_weight, DTensor):
 -                from megatron.core.distributed.fsdp.src.megatron_fsdp.uneven_dtensor import (
@@ -28,24 +29,29 @@ index e3b0acaf4..fff135fdf 100644
 +                from megatron.bridge.models.conversion._mcore_compat import uneven_dtensor_to_full_tensor
                  megatron_weights = uneven_dtensor_to_full_tensor(task.param_weight)
              else:
+                 megatron_weights = task.param_weight
 diff --git a/tests/unit_tests/models/test_option_b_mcore_compat.py b/tests/unit_tests/models/test_option_b_mcore_compat.py
 new file mode 100644
-index 000000000..582e5eff3
+index 000000000..dde1c541c
 --- /dev/null
 +++ b/tests/unit_tests/models/test_option_b_mcore_compat.py
-@@ -0,0 +1,125 @@
-+import ast
+@@ -0,0 +1,239 @@
++import importlib
 +import importlib.util
 +import os
 +from pathlib import Path
 +import sys
++import tomllib
++from types import ModuleType
 +
++from packaging.specifiers import SpecifierSet
++from packaging.version import Version
 +import torch
 +
 +
 +ROOT = Path(__file__).resolve().parents[3]
++MCORE_SOURCE = Path(os.environ["MCORE_SOURCE"]).resolve()
 +COMPAT_PATH = ROOT / "src" / "megatron" / "bridge" / "models" / "conversion" / "_mcore_compat.py"
-+PARAM_MAPPING_PATH = ROOT / "src" / "megatron" / "bridge" / "models" / "conversion" / "param_mapping.py"
 +
 +
 +def _load_compat_module():
@@ -56,106 +62,216 @@ index 000000000..582e5eff3
 +    return module
 +
 +
-+def test_standard_te_mapping_contract_has_no_mindspeed_aliases():
-+    source = PARAM_MAPPING_PATH.read_text(encoding="utf-8")
-+    tree = ast.parse(source)
-+    auto_mapping = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "AutoMapping")
-+    class_source = ast.get_source_segment(source, auto_mapping)
++def _load_param_mapping_module():
++    import megatron
 +
-+    for name in (
-+        "TENorm",
-+        "TELinear",
-+        "TELayerNormColumnParallelLinear",
-+        "TEColumnParallelLinear",
-+        "TERowParallelLinear",
-+        "TEDotProductAttention",
-+    ):
-+        assert name in class_source
-+    assert "MindSpeed" not in class_source
++    bridge_root = ROOT / "src" / "megatron" / "bridge"
++    packages = (
++        ("megatron.bridge", bridge_root),
++        ("megatron.bridge.models", bridge_root / "models"),
++        ("megatron.bridge.models.conversion", bridge_root / "models" / "conversion"),
++    )
++    for name, path in packages:
++        package = ModuleType(name)
++        package.__package__ = name
++        package.__path__ = [str(path)]
++        sys.modules[name] = package
++    megatron.bridge = sys.modules["megatron.bridge"]
++    return importlib.import_module("megatron.bridge.models.conversion.param_mapping")
 +
 +
-+def test_uneven_dtensor_adapter_matches_mcore_017_gather_layout(monkeypatch):
-+    mcore_source = Path(os.environ["MCORE_SOURCE"]).resolve()
-+    sys.path.insert(0, str(mcore_source))
-+    try:
-+        from megatron.core.distributed.fsdp.src.megatron_fsdp import uneven_dtensor
-+    finally:
-+        sys.path.pop(0)
++def _standard_te_module(name, **attributes):
++    from megatron.core.extensions import transformer_engine as te_extensions
 +
-+    class FakeShard:
-+        pass
++    standard_class = getattr(te_extensions, name, None)
++    instance = None
++    if isinstance(standard_class, type) and issubclass(standard_class, torch.nn.Module):
++        try:
++            instance = object.__new__(standard_class)
++            torch.nn.Module.__init__(instance)
++        except (TypeError, RuntimeError):
++            instance = None
++    if instance is None:
++        faithful_class = type(name, (torch.nn.Module,), {})
++        instance = faithful_class()
++    for attribute, value in attributes.items():
++        setattr(instance, attribute, value)
++    assert type(instance).__name__ == name
++    return instance
 +
-+    class FakeStridedShard:
-+        pass
 +
-+    class FakeReplicate:
-+        pass
++def test_auto_mapping_classifies_standard_mcore_te_semantics():
++    param_mapping = _load_param_mapping_module()
++    cases = (
++        ("TEColumnParallelLinear", "weight", {}, "column"),
++        ("TERowParallelLinear", "weight", {}, "row"),
++        ("TENorm", "weight", {}, "replicated"),
++        ("TELayerNormColumnParallelLinear", "weight", {}, "column"),
++        ("TELayerNormColumnParallelLinear", "layer_norm_weight", {}, "replicated"),
++        ("TELinear", "weight", {"parallel_mode": "column"}, "column"),
++        ("TELinear", "weight", {"parallel_mode": "row"}, "row"),
++        ("TELinear", "weight", {"parallel_mode": "duplicated"}, "replicated"),
++    )
 +
-+    class FakeProcessGroup:
-+        @staticmethod
-+        def size():
-+            return 2
++    for class_name, parameter, attributes, expected in cases:
++        mapping = param_mapping.AutoMapping(f"decoder.{parameter}", "model.weight")
++        module = _standard_te_module(class_name, **attributes)
++        assert mapping._detect_parallelism_type(module) == expected
 +
-+        @staticmethod
-+        def rank():
-+            return 0
 +
-+    class FakeMesh:
-+        mesh_dim_names = ()
++class FakeShard:
++    pass
 +
-+        def get_group(self):
-+            return FakeProcessGroup()
 +
-+    class Chunk:
-+        offsets = [0]
++class FakeStridedShard:
++    pass
 +
-+    class LocalMetadata:
-+        __create_chunk_list__ = True
 +
-+    class FakeDTensor:
-+        def __init__(self, local, *, shape, placements, device_mesh):
-+            self._local = local
-+            self._local_tensor = LocalMetadata()
-+            self.shape = shape
-+            self.placements = placements
-+            self.device_mesh = device_mesh
++class FakeReplicate:
++    pass
 +
-+        def __create_chunk_list__(self):
-+            return [Chunk()]
 +
-+        def to_local(self):
-+            return self._local
++class FakeProcessGroup:
++    def __init__(self, size, rank=0):
++        self._size = size
++        self._rank = rank
 +
-+        @classmethod
-+        def from_local(cls, local, *, placements, device_mesh):
-+            return cls(local, shape=tuple(local.shape), placements=placements, device_mesh=device_mesh)
++    def size(self):
++        return self._size
 +
-+    def fake_all_gather_object(output, local_info, group):
-+        output[:] = [
-+            local_info,
-+            {"shape": [1], "offset": [2], "rank": 1},
-+        ]
++    def rank(self):
++        return self._rank
 +
-+    def fake_all_gather(output, local, group):
-+        output[0].copy_(local)
-+        output[1].copy_(torch.tensor([3.0]))
 +
++class FakeMesh:
++    mesh_dim_names = ()
++
++    def __init__(self, process_group):
++        self._process_group = process_group
++
++    def get_group(self):
++        return self._process_group
++
++
++class Chunk:
++    def __init__(self, offsets):
++        self.offsets = list(offsets)
++
++
++class LocalMetadata:
++    __create_chunk_list__ = True
++
++
++class FakeDTensor:
++    def __init__(self, local, *, shape, placements, device_mesh, offsets):
++        self._local = local
++        self._local_tensor = LocalMetadata()
++        self._offsets = list(offsets)
++        self.shape = tuple(shape)
++        self.placements = placements
++        self.device_mesh = device_mesh
++
++    def __create_chunk_list__(self):
++        return [Chunk(self._offsets)]
++
++    def to_local(self):
++        return self._local
++
++    @classmethod
++    def from_local(cls, local, *, placements, device_mesh):
++        return cls(
++            local,
++            shape=tuple(local.shape),
++            placements=placements,
++            device_mesh=device_mesh,
++            offsets=[0] * local.ndim,
++        )
++
++
++def _patch_uneven_dtensor_types(monkeypatch, uneven_dtensor):
 +    monkeypatch.setattr(uneven_dtensor, "DTensor", FakeDTensor)
 +    monkeypatch.setattr(uneven_dtensor, "Shard", FakeShard)
 +    monkeypatch.setattr(uneven_dtensor, "_StridedShard", FakeStridedShard)
 +    monkeypatch.setattr(uneven_dtensor, "Replicate", FakeReplicate)
++
++
++def test_uneven_dtensor_adapter_preserves_multidimensional_layout_dtype_and_device(monkeypatch):
++    from megatron.core.distributed.fsdp.src.megatron_fsdp import uneven_dtensor
++
++    _patch_uneven_dtensor_types(monkeypatch, uneven_dtensor)
++    expected = torch.arange(15, dtype=torch.float64).reshape(3, 5)
++    chunks = (
++        ({"shape": [2, 3], "offset": [0, 0], "rank": 0}, expected[:2, :3]),
++        ({"shape": [2, 2], "offset": [0, 3], "rank": 1}, expected[:2, 3:]),
++        ({"shape": [1, 3], "offset": [2, 0], "rank": 2}, expected[2:, :3]),
++        ({"shape": [1, 2], "offset": [2, 3], "rank": 3}, expected[2:, 3:]),
++    )
++
++    def fake_all_gather_object(output, local_info, group):
++        output[:] = [metadata for metadata, _ in chunks]
++
++    def fake_all_gather(output, local, group):
++        for destination, (_, chunk) in zip(output, chunks):
++            destination.copy_(chunk)
++
 +    monkeypatch.setattr(uneven_dtensor.dist, "all_gather_object", fake_all_gather_object)
 +    monkeypatch.setattr(uneven_dtensor.dist, "all_gather", fake_all_gather)
-+
 +    source = FakeDTensor(
-+        torch.tensor([1.0, 2.0]),
-+        shape=(3,),
++        chunks[0][1],
++        shape=expected.shape,
 +        placements=[FakeShard()],
-+        device_mesh=FakeMesh(),
++        device_mesh=FakeMesh(FakeProcessGroup(size=len(chunks))),
++        offsets=chunks[0][0]["offset"],
 +    )
-+    adapter = _load_compat_module()
 +
-+    result = adapter.uneven_dtensor_to_full_tensor(source)
++    result = _load_compat_module().uneven_dtensor_to_full_tensor(source)
 +
 +    assert isinstance(result, torch.Tensor)
-+    assert torch.equal(result, torch.tensor([1.0, 2.0, 3.0]))
++    assert torch.equal(result, expected)
++    assert result.dtype == expected.dtype
++    assert result.device == expected.device
++    assert result.layout == torch.strided
++    assert result.stride() == expected.stride()
++
++
++def test_uneven_dtensor_adapter_clones_replicated_tensor_without_shard_gather(monkeypatch):
++    from megatron.core.distributed.fsdp.src.megatron_fsdp import uneven_dtensor
++
++    _patch_uneven_dtensor_types(monkeypatch, uneven_dtensor)
++    local = torch.arange(12, dtype=torch.int64).reshape(3, 4)
++
++    def fake_all_gather_object(output, local_info, group):
++        output[:] = [local_info]
++
++    def unexpected_all_gather(output, tensor, group):
++        raise AssertionError("replicated DTensor must not gather tensor shards")
++
++    monkeypatch.setattr(uneven_dtensor.dist, "all_gather_object", fake_all_gather_object)
++    monkeypatch.setattr(uneven_dtensor.dist, "all_gather", unexpected_all_gather)
++    source = FakeDTensor(
++        local,
++        shape=local.shape,
++        placements=[FakeReplicate()],
++        device_mesh=FakeMesh(FakeProcessGroup(size=1)),
++        offsets=[0, 0],
++    )
++
++    result = _load_compat_module().uneven_dtensor_to_full_tensor(source)
++
++    assert torch.equal(result, local)
++    assert result.data_ptr() != local.data_ptr()
++    assert result.dtype == local.dtype
++    assert result.device == local.device
++    assert result.layout == local.layout
++
++
++def test_option_b_python_contract_is_metadata_intersection():
++    mcore_metadata = tomllib.loads((MCORE_SOURCE / "pyproject.toml").read_text(encoding="utf-8"))
++    bridge_metadata = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
++    mcore_python = SpecifierSet(mcore_metadata["project"]["requires-python"])
++    bridge_python = SpecifierSet(bridge_metadata["project"]["requires-python"])
++
++    assert Version("3.11") not in mcore_python
++    assert Version("3.12") in mcore_python
++    assert Version("3.12") in bridge_python
++    assert Version("3.13") not in bridge_python

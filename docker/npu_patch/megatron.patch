@@ -2,9 +2,10 @@ diff --git a/megatron/core/transformer/module.py b/megatron/core/transformer/mod
 index 6539ee361..9906a2aa5 100644
 --- a/megatron/core/transformer/module.py
 +++ b/megatron/core/transformer/module.py
-@@ -19,7 +19,13 @@ from megatron.core.transformer.utils import (
+@@ -18,9 +18,15 @@ from megatron.core.transformer.utils import (
+     sharded_state_dict_default,
  )
- 
+
 -_FLOAT_TYPES = (torch.FloatTensor, torch.cuda.FloatTensor)
 -_HALF_TYPES = (torch.HalfTensor, torch.cuda.HalfTensor)
 -_BF16_TYPES = (torch.BFloat16Tensor, torch.cuda.BFloat16Tensor)
@@ -17,8 +18,9 @@ index 6539ee361..9906a2aa5 100644
 +_FLOAT_TYPES = (torch.FloatTensor, torch.cuda.FloatTensor) + _npu_tensor_types("FloatTensor")
 +_HALF_TYPES = (torch.HalfTensor, torch.cuda.HalfTensor) + _npu_tensor_types("HalfTensor")
 +_BF16_TYPES = (torch.BFloat16Tensor, torch.cuda.BFloat16Tensor) + _npu_tensor_types("BFloat16Tensor")
- 
- 
+
+
+ def param_is_not_shared(param):  # pylint: disable=missing-function-docstring
 diff --git a/tests/unit_tests/transformer/test_npu_float16_module_types.py b/tests/unit_tests/transformer/test_npu_float16_module_types.py
 new file mode 100644
 index 000000000..5c2279c54
