@@ -515,15 +515,18 @@ index 2fc2a6359..6952d1fc1 100644
      return x.item()
 diff --git a/tests/test_npu_patch_megatron_adaptor.py b/tests/test_npu_patch_megatron_adaptor.py
 new file mode 100644
-index 000000000..158ad7276
+index 000000000..384c60eee
 --- /dev/null
 +++ b/tests/test_npu_patch_megatron_adaptor.py
-@@ -0,0 +1,158 @@
+@@ -0,0 +1,182 @@
 +import ast
 +import os
 +from pathlib import Path
 +import subprocess
 +import sys
++
++import pytest
++import torch
 +
 +
 +ROOT = Path(__file__).resolve().parents[1]
@@ -565,21 +568,32 @@ index 000000000..158ad7276
 +        assert "repatch" not in source
 +
 +
-+def test_direct_entries_bind_jit_after_adaptor_patch(tmp_path):
++def _require_live_npu():
++    try:
++        import torch_npu  # noqa: F401
++
++        available = torch.npu.is_available() and torch.npu.device_count() > 0
++    except (ImportError, RuntimeError):
++        available = False
++    if available:
++        return
++    message = "requires the Option-B Python 3.12 live NPU runtime"
++    if os.environ.get("OPTION_B_REQUIRE_LIVE_NPU") == "1":
++        pytest.fail(message)
++    pytest.skip(message)
++
++
++def test_direct_entries_bind_jit_after_exact_adaptor_patch():
 +    mcore_source = Path(os.environ["MCORE_SOURCE"]).resolve()
-+    (tmp_path / "megatron_adaptor.py").write_text(
-+        "import torch\n"
-+        "def dummy_compile(fn=None, *args, **kwargs):\n"
-+        "    if fn is None:\n"
-+        "        return lambda wrapped: wrapped\n"
-+        "    return fn\n"
-+        "torch.jit.script = dummy_compile\n"
-+        "torch.compile = dummy_compile\n",
-+        encoding="utf-8",
-+    )
++    adaptor_source = Path(os.environ["MEGATRON_ADAPTOR_SOURCE"]).resolve()
++    adaptor_commit = subprocess.check_output(
++        ["git", "-C", str(adaptor_source), "rev-parse", "HEAD"], text=True
++    ).strip()
++    assert adaptor_commit == "56e18624ec632cf462c079c3873b8fbf2fbd3c77"
++    assert sys.version_info[:2] == (3, 12)
 +    env = os.environ.copy()
-+    env["PYTHONPATH"] = os.pathsep.join((str(tmp_path), str(ROOT), str(mcore_source)))
-+    probe_source = """
++    env["PYTHONPATH"] = os.pathsep.join((str(ROOT), str(adaptor_source), str(mcore_source)))
++    probe_source = f"""
 +import ast
 +from pathlib import Path
 +import sys
@@ -599,11 +613,15 @@ index 000000000..158ad7276
 +    for node in imports
 +    if any(name == "megatron" or name.startswith("megatron.") for name in names(node))
 +)
-+exec(compile(ast.Module(body=[adaptor, mcore], type_ignores=[]), str(path), "exec"), {})
++exec(compile(ast.Module(body=[adaptor, mcore], type_ignores=[]), str(path), "exec"), {{}})
++import megatron_adaptor
 +import torch
 +from megatron.core.jit import jit_fuser
++assert Path(megatron_adaptor.__file__).resolve().is_relative_to(Path({str(adaptor_source)!r}))
 +assert jit_fuser is torch.compile
-+assert jit_fuser.__module__ == "megatron_adaptor"
++assert jit_fuser is torch.jit.script
++assert jit_fuser.__module__ == "megatron_adaptor.patches.requirements.requirements"
++assert jit_fuser.__name__ == "dummy_compile"
 +"""
 +
 +    for path in DIRECT_MEGATRON_ENTRYPOINTS:
@@ -638,33 +656,39 @@ index 000000000..158ad7276
 +
 +
 +def test_convert_hf_to_torch_dist_imports_with_pinned_mbridge():
++    _require_live_npu()
 +    mcore_source = Path(os.environ["MCORE_SOURCE"]).resolve()
 +    bridge_source = Path(os.environ["BRIDGE_SOURCE"]).resolve()
 +    mbridge_source = Path(os.environ["MBRIDGE_SOURCE"]).resolve()
 +    te_npu_source = Path(os.environ["TE_NPU_SOURCE"]).resolve()
++    adaptor_source = Path(os.environ["MEGATRON_ADAPTOR_SOURCE"]).resolve()
 +    mbridge_commit = subprocess.check_output(
 +        ["git", "-C", str(mbridge_source), "rev-parse", "HEAD"], text=True
 +    ).strip()
 +    assert mbridge_commit == "89eb10887887bc74853f89a4de258c0702932a1c"
 +    env = os.environ.copy()
 +    env["PYTHONPATH"] = os.pathsep.join(
-+        (str(ROOT), str(bridge_source / "src"), str(mcore_source))
++        (
++            str(ROOT),
++            str(adaptor_source),
++            str(te_npu_source),
++            str(bridge_source / "src"),
++            str(mcore_source),
++        )
 +    )
 +    probe_source = f"""
-+import triton
-+
-+# Keep this a package-import test while avoiding device-driver construction on
-+# the CPU-only verification host.
-+triton.autotune = lambda *args, **kwargs: (lambda fn: fn)
-+
 +from importlib.metadata import version
 +from pathlib import Path
 +
++import torch
++import torch_npu
 +import tools.convert_hf_to_torch_dist
 +import mbridge
 +import transformer_engine
 +
++assert torch.npu.is_available() and torch.npu.device_count() > 0
 +assert version("mbridge") == "0.15.1"
++assert version("triton-ascend") == "3.2.1"
 +assert Path(mbridge.__file__).resolve().is_relative_to(Path({str(mbridge_source)!r}))
 +assert Path(transformer_engine.__file__).resolve().is_relative_to(Path({str(te_npu_source)!r}))
 +"""

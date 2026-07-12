@@ -13,7 +13,7 @@ training-patch replay.
 | PyTorch | 2.7.1 | [PyTorch](https://pytorch.org/) |
 | torch-npu | product 26.0.0; branch v2.7.1-26.0.0; wheel 2.7.1.post4 | [Ascend PyTorch](https://gitcode.com/Ascend/pytorch) |
 | torchvision | 0.22.1 | [torchvision](https://github.com/pytorch/vision) |
-| triton-ascend | >=3.2,<3.3 | [Ascend PyPI mirror](https://mirrors.aliyun.com/pypi/simple/) |
+| triton-ascend | 3.2.1 | [Ascend PyPI mirror](https://mirrors.aliyun.com/pypi/simple/) |
 | Megatron-LM / Mcore | 963bf39218e8bb83a1203b40293358498322be50 (core_r0.17.0) | [NVIDIA Megatron-LM](https://github.com/NVIDIA/Megatron-LM) |
 | MegatronAdaptor | 56e18624ec632cf462c079c3873b8fbf2fbd3c77 (core_r0.17.0) | [Ascend MegatronAdaptor](https://gitcode.com/ascend/MegatronAdaptor) |
 | TransformerEngineNPU | cecf4a2a3ea7f31afb85cc6669f6b18adc56e5bd | [Ascend TransformerEngineNPU](https://gitcode.com/ascend/TransformerEngineNPU) |
@@ -62,13 +62,13 @@ distinct from its 26.0.0 product release:
     werkzeug==3.1.8
     markupsafe==3.0.3
     six==1.17.0
-    triton-ascend>=3.2,<3.3
+    triton-ascend==3.2.1
     EOF
 
     python -m pip install -c /tmp/miles-option-b-constraints.txt \
       torch==2.7.1 torch-npu==2.7.1.post4 torchvision==0.22.1
     python -m pip install --no-deps -c /tmp/miles-option-b-constraints.txt \
-      --index-url https://mirrors.aliyun.com/pypi/simple/ 'triton-ascend>=3.2,<3.3'
+      --index-url https://mirrors.aliyun.com/pypi/simple/ triton-ascend==3.2.1
     python -m pip install -c /tmp/miles-option-b-constraints.txt \
       'setuptools>=77,<80' 'wheel>=0.45,<1' 'pybind11>=2.13,<3' \
       'packaging>=26.2,<27' 'numpy>=1.26,<3' 'typing-extensions>=4.12,<5' \
@@ -97,7 +97,25 @@ Verify the immutable framework packages after every install command:
 
 ## Source Installation
 
-Prepare immutable source checkouts:
+The patch bundle is a separately delivered, versioned artifact; it is not part
+of the pinned Miles source commit. Extract that artifact, point
+`PATCH_BUNDLE_DIR` at its `npu_patch` directory, and verify every patch by
+content digest before using it. Do not copy a patch directory from a Miles
+checkout or fetch a mutable branch:
+
+    export PATCH_BUNDLE_DIR=<EXTRACTED_TASK_4_BUNDLE>/npu_patch
+    test -f "$PATCH_BUNDLE_DIR/readme.md"
+    (
+      cd "$PATCH_BUNDLE_DIR"
+      sha256sum --check <<'EOF'
+    b61941df50a3767a98c62b42040fa2eca01c68192a5d8884c52985258516fc8f  miles.patch
+    36f027c5e1ec3dc1d05f3fe3fdd32d15df203e45063b20736955ea1d30faab22  megatron.patch
+    801a7d07b43249fe76a9dbfb961565138088fb03e0efb9b237225534bfc02162  megatron_bridge.patch
+    d014bba43071c2190d113706a0ca789d567eb3d8b26a123bd71a7866bc0e84f3  sglang.patch
+    EOF
+    )
+
+Prepare immutable source checkouts independently of the patch artifact:
 
     mkdir <WORKSPACE> && cd <WORKSPACE>
 
@@ -118,7 +136,6 @@ Prepare immutable source checkouts:
 
     git clone https://github.com/radixark/miles.git
     git -C miles checkout --detach 551d15914c89b1229b76fe806ca5f5aa5a826309
-    cp -r miles/docker/npu_patch .
 
 Install in dependency order without build isolation or dependency resolution;
 the build/test imports were installed in the constrained base step:
@@ -195,9 +212,9 @@ MegatronAdaptor and do not restore the removed MindSpeed patch or aliases.
 
 ## Applying Patches
 
-    git -C <WORKSPACE>/miles apply <WORKSPACE>/npu_patch/miles.patch
-    git -C <WORKSPACE>/Megatron-LM apply <WORKSPACE>/npu_patch/megatron.patch
-    git -C <WORKSPACE>/Megatron-Bridge apply <WORKSPACE>/npu_patch/megatron_bridge.patch
+    git -C <WORKSPACE>/miles apply "$PATCH_BUNDLE_DIR/miles.patch"
+    git -C <WORKSPACE>/Megatron-LM apply "$PATCH_BUNDLE_DIR/megatron.patch"
+    git -C <WORKSPACE>/Megatron-Bridge apply "$PATCH_BUNDLE_DIR/megatron_bridge.patch"
 
 The Miles patch imports megatron_adaptor at the package bootstrap and before
 Mcore in every direct Megatron process entry. There is no supported
@@ -215,6 +232,7 @@ uneven-DTensor gather back to the plain full tensor expected by Bridge export.
     MCORE_SOURCE=<WORKSPACE>/Megatron-LM \
     BRIDGE_SOURCE=<WORKSPACE>/Megatron-Bridge \
     MBRIDGE_SOURCE=<WORKSPACE>/mbridge \
+    MEGATRON_ADAPTOR_SOURCE=<WORKSPACE>/MegatronAdaptor \
     TE_NPU_SOURCE=<WORKSPACE>/TransformerEngineNPU \
       python -m pytest -q -o addopts='' tests/test_npu_patch_megatron_adaptor.py
     python -m pytest -q -o addopts='' tests/test_npu_patch_runtime_env.py
@@ -225,15 +243,44 @@ uneven-DTensor gather back to the plain full tensor expected by Bridge export.
 
     cd <WORKSPACE>/Megatron-Bridge
     MCORE_SOURCE=<WORKSPACE>/Megatron-LM \
+    MEGATRON_ADAPTOR_SOURCE=<WORKSPACE>/MegatronAdaptor \
     TE_NPU_SOURCE=<WORKSPACE>/TransformerEngineNPU \
-    PYTHONPATH=<WORKSPACE>/Megatron-Bridge/src:<WORKSPACE>/Megatron-LM \
+    PYTHONPATH=<WORKSPACE>/MegatronAdaptor:<WORKSPACE>/TransformerEngineNPU:<WORKSPACE>/Megatron-Bridge/src:<WORKSPACE>/Megatron-LM \
       python -m pytest -q -o addopts='' \
       --confcutdir=tests/unit_tests/models \
       tests/unit_tests/models/test_option_b_mcore_compat.py
 
-The focused tests are patch-replay checks, not a substitute for a
-dependency-complete import, NPU operation, reduced training, or Miles
-weight-synchronization gate.
+On a host without a usable NPU, the real Transformer Engine identity and
+normal Bridge/Miles import tests are skipped. Such a run is useful for patch
+replay but is not runtime evidence. The final import gate must run unchanged
+on the Option B NPU runtime with the exact adaptor and TransformerEngineNPU
+sources:
+
+    source <CANN_PATH>/ascend-toolkit/set_env.sh
+
+    cd <WORKSPACE>/miles
+    OPTION_B_REQUIRE_LIVE_NPU=1 \
+    MCORE_SOURCE=<WORKSPACE>/Megatron-LM \
+    BRIDGE_SOURCE=<WORKSPACE>/Megatron-Bridge \
+    MBRIDGE_SOURCE=<WORKSPACE>/mbridge \
+    MEGATRON_ADAPTOR_SOURCE=<WORKSPACE>/MegatronAdaptor \
+    TE_NPU_SOURCE=<WORKSPACE>/TransformerEngineNPU \
+    PYTHONPATH=<WORKSPACE>/miles:<WORKSPACE>/MegatronAdaptor:<WORKSPACE>/TransformerEngineNPU:<WORKSPACE>/Megatron-Bridge/src:<WORKSPACE>/Megatron-LM \
+      python -m pytest -q -o addopts='' \
+      tests/test_npu_patch_megatron_adaptor.py
+
+    cd <WORKSPACE>/Megatron-Bridge
+    OPTION_B_REQUIRE_LIVE_NPU=1 \
+    MCORE_SOURCE=<WORKSPACE>/Megatron-LM \
+    MEGATRON_ADAPTOR_SOURCE=<WORKSPACE>/MegatronAdaptor \
+    TE_NPU_SOURCE=<WORKSPACE>/TransformerEngineNPU \
+    PYTHONPATH=<WORKSPACE>/MegatronAdaptor:<WORKSPACE>/TransformerEngineNPU:<WORKSPACE>/Megatron-Bridge/src:<WORKSPACE>/Megatron-LM \
+      python -m pytest -q -o addopts='' \
+      --confcutdir=tests/unit_tests/models \
+      tests/unit_tests/models/test_option_b_mcore_compat.py
+
+These import gates do not substitute for reduced training or Miles
+weight-synchronization qualification.
 
 ## Capability Boundaries
 

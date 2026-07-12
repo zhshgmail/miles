@@ -32,10 +32,10 @@ index e3b0acaf4..fff135fdf 100644
                  megatron_weights = task.param_weight
 diff --git a/tests/unit_tests/models/test_option_b_mcore_compat.py b/tests/unit_tests/models/test_option_b_mcore_compat.py
 new file mode 100644
-index 000000000..ff412bba7
+index 000000000..2a5ef6f9b
 --- /dev/null
 +++ b/tests/unit_tests/models/test_option_b_mcore_compat.py
-@@ -0,0 +1,281 @@
+@@ -0,0 +1,340 @@
 +import importlib
 +import importlib.util
 +import os
@@ -47,6 +47,7 @@ index 000000000..ff412bba7
 +
 +from packaging.specifiers import SpecifierSet
 +from packaging.version import Version
++import pytest
 +import torch
 +
 +
@@ -81,42 +82,99 @@ index 000000000..ff412bba7
 +    return importlib.import_module("megatron.bridge.models.conversion.param_mapping")
 +
 +
-+def _standard_te_module(name, **attributes):
-+    from megatron.core.extensions import transformer_engine as te_extensions
++def _require_live_npu():
++    try:
++        import torch_npu  # noqa: F401
 +
-+    standard_class = getattr(te_extensions, name, None)
-+    instance = None
-+    if isinstance(standard_class, type) and issubclass(standard_class, torch.nn.Module):
-+        try:
-+            instance = object.__new__(standard_class)
-+            torch.nn.Module.__init__(instance)
-+        except (TypeError, RuntimeError):
-+            instance = None
-+    if instance is None:
-+        faithful_class = type(name, (torch.nn.Module,), {})
-+        instance = faithful_class()
-+    for attribute, value in attributes.items():
-+        setattr(instance, attribute, value)
-+    assert type(instance).__name__ == name
-+    return instance
++        available = torch.npu.is_available() and torch.npu.device_count() > 0
++    except (ImportError, RuntimeError):
++        available = False
++    if available:
++        return
++    message = "requires the Option-B Python 3.12 live NPU runtime"
++    if os.environ.get("OPTION_B_REQUIRE_LIVE_NPU") == "1":
++        pytest.fail(message)
++    pytest.skip(message)
++
++
++def _real_te_modules():
++    import megatron_adaptor
++    from megatron.core.extensions import transformer_engine as te_extensions
++    from megatron.core.transformer.transformer_config import TransformerConfig
++
++    adaptor_source = Path(os.environ["MEGATRON_ADAPTOR_SOURCE"]).resolve()
++    assert Path(megatron_adaptor.__file__).resolve().is_relative_to(adaptor_source)
++    config = TransformerConfig(
++        num_layers=1,
++        hidden_size=8,
++        num_attention_heads=1,
++        use_cpu_initialization=False,
++    )
++    init_method = torch.nn.init.xavier_normal_
++    column = te_extensions.TEColumnParallelLinear(
++        8,
++        8,
++        config=config,
++        init_method=init_method,
++        gather_output=False,
++        bias=True,
++        skip_bias_add=False,
++        is_expert=False,
++    )
++    row = te_extensions.TERowParallelLinear(
++        8,
++        8,
++        config=config,
++        init_method=init_method,
++        bias=True,
++        input_is_parallel=True,
++        skip_bias_add=False,
++        is_expert=False,
++    )
++    fused = te_extensions.TELayerNormColumnParallelLinear(
++        8,
++        8,
++        config=config,
++        init_method=init_method,
++        gather_output=False,
++        bias=True,
++        skip_bias_add=False,
++        is_expert=False,
++    )
++    duplicated = te_extensions.TELinear(
++        8,
++        8,
++        parallel_mode="duplicated",
++        config=config,
++        init_method=init_method,
++        bias=True,
++        skip_bias_add=False,
++        skip_weight_param_allocation=False,
++    )
++    norm = te_extensions.TENorm(config, 8)
++    assert type(column) is te_extensions.TEColumnParallelLinear
++    assert type(row) is te_extensions.TERowParallelLinear
++    assert type(fused) is te_extensions.TELayerNormColumnParallelLinear
++    assert type(duplicated) is te_extensions.TELinear
++    assert isinstance(norm, torch.nn.Module)
++    return column, row, fused, duplicated, norm
 +
 +
 +def test_auto_mapping_classifies_standard_mcore_te_semantics():
++    _require_live_npu()
++    column, row, fused, duplicated, norm = _real_te_modules()
 +    param_mapping = _load_param_mapping_module()
 +    cases = (
-+        ("TEColumnParallelLinear", "weight", {}, "column"),
-+        ("TERowParallelLinear", "weight", {}, "row"),
-+        ("TENorm", "weight", {}, "replicated"),
-+        ("TELayerNormColumnParallelLinear", "weight", {}, "column"),
-+        ("TELayerNormColumnParallelLinear", "layer_norm_weight", {}, "replicated"),
-+        ("TELinear", "weight", {"parallel_mode": "column"}, "column"),
-+        ("TELinear", "weight", {"parallel_mode": "row"}, "row"),
-+        ("TELinear", "weight", {"parallel_mode": "duplicated"}, "replicated"),
++        (column, "weight", "column"),
++        (row, "weight", "row"),
++        (norm, "weight", "replicated"),
++        (fused, "weight", "column"),
++        (fused, "layer_norm_weight", "replicated"),
++        (duplicated, "weight", "replicated"),
 +    )
 +
-+    for class_name, parameter, attributes, expected in cases:
++    for module, parameter, expected in cases:
 +        mapping = param_mapping.AutoMapping(f"decoder.{parameter}", "model.weight")
-+        module = _standard_te_module(class_name, **attributes)
 +        assert mapping._detect_parallelism_type(module) == expected
 +
 +
@@ -279,29 +337,30 @@ index 000000000..ff412bba7
 +
 +
 +def test_normal_megatron_bridge_imports_in_clean_process():
++    _require_live_npu()
 +    env = os.environ.copy()
-+    env["PYTHONPATH"] = os.pathsep.join((str(ROOT / "src"), str(MCORE_SOURCE)))
++    adaptor_source = Path(env["MEGATRON_ADAPTOR_SOURCE"]).resolve()
 +    te_npu_source = Path(env["TE_NPU_SOURCE"]).resolve()
++    env["PYTHONPATH"] = os.pathsep.join(
++        (str(adaptor_source), str(te_npu_source), str(ROOT / "src"), str(MCORE_SOURCE))
++    )
 +    probe_source = f"""
-+import triton
-+
-+# Import-only smoke tests have no active Triton device driver. The target NPU
-+# environment supplies one; bypass autotune construction without bypassing any
-+# megatron.bridge package initializers.
-+triton.autotune = lambda *args, **kwargs: (lambda fn: fn)
-+
 +from importlib.metadata import version
 +from pathlib import Path
 +
 +from packaging.specifiers import SpecifierSet
 +from packaging.version import Version
 +
++import torch
++import torch_npu
++import megatron_adaptor
 +import megatron.bridge
 +from megatron.bridge import AutoBridge
 +from megatron.bridge.training.config import DistributedDataParallelConfig
 +from megatron.bridge.training.train import train
 +import transformer_engine
 +
++assert torch.npu.is_available() and torch.npu.device_count() > 0
 +assert version("nvidia-modelopt") == "0.43.0"
 +assert version("omegaconf") == "2.3.0"
 +assert version("tensorboard") == "2.19.0"
