@@ -32,10 +32,10 @@ index e3b0acaf4..fff135fdf 100644
                  megatron_weights = task.param_weight
 diff --git a/tests/unit_tests/models/test_option_b_mcore_compat.py b/tests/unit_tests/models/test_option_b_mcore_compat.py
 new file mode 100644
-index 000000000..feba0e0a4
+index 000000000..ff412bba7
 --- /dev/null
 +++ b/tests/unit_tests/models/test_option_b_mcore_compat.py
-@@ -0,0 +1,279 @@
+@@ -0,0 +1,281 @@
 +import importlib
 +import importlib.util
 +import os
@@ -299,10 +299,12 @@ index 000000000..feba0e0a4
 +import megatron.bridge
 +from megatron.bridge import AutoBridge
 +from megatron.bridge.training.config import DistributedDataParallelConfig
++from megatron.bridge.training.train import train
 +import transformer_engine
 +
 +assert version("nvidia-modelopt") == "0.43.0"
 +assert version("omegaconf") == "2.3.0"
++assert version("tensorboard") == "2.19.0"
 +assert Version(version("datasets")) in SpecifierSet(">=2.20,<5")
 +assert Path(transformer_engine.__file__).resolve().is_relative_to(Path({str(te_npu_source)!r}))
 +"""

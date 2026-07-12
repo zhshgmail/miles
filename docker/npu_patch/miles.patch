@@ -58,6 +58,28 @@ index 54ca4b81a..a1f6f7334 100644
              init_method=f"tcp://{master_address}:{master_port}",
              world_size=world_size,
              rank=0 if self.role == "actor" else 1,
+diff --git a/miles/backends/megatron_utils/arguments.py b/miles/backends/megatron_utils/arguments.py
+index f5ece6d88..82eaaac65 100644
+--- a/miles/backends/megatron_utils/arguments.py
++++ b/miles/backends/megatron_utils/arguments.py
+@@ -2,7 +2,7 @@ import logging
+ import os
+
+ from megatron.training.arguments import parse_args, validate_args
+-from megatron.training.tokenizer.tokenizer import _vocab_size_with_padding
++from megatron.core.tokenizers.utils.build_tokenizer import vocab_size_with_padding
+
+ __all__ = ["validate_args", "parse_args", "set_default_megatron_args"]
+
+@@ -26,7 +26,7 @@ def set_default_megatron_args(args):
+         args.rope_type = "yarn" if args.multi_latent_attention else "rope"
+
+     if args.vocab_size and not args.padded_vocab_size:
+-        args.padded_vocab_size = _vocab_size_with_padding(args.vocab_size, args)
++        args.padded_vocab_size = vocab_size_with_padding(args.vocab_size, args)
+
+     if not args.tokenizer_model and not args.tokenizer_type:
+         logger.info("--tokenizer-model not set, use --hf-checkpoint as tokenizer model.")
 diff --git a/miles/backends/megatron_utils/model.py b/miles/backends/megatron_utils/model.py
 index 5d2503dab..667051e14 100644
 --- a/miles/backends/megatron_utils/model.py
@@ -75,9 +97,25 @@ index 5d2503dab..667051e14 100644
          config=config,
          model_chunks=model,
 diff --git a/miles/backends/megatron_utils/model_provider.py b/miles/backends/megatron_utils/model_provider.py
-index 45adc8679..329c05037 100644
+index 45adc8679..e9672b49b 100644
 --- a/miles/backends/megatron_utils/model_provider.py
 +++ b/miles/backends/megatron_utils/model_provider.py
+@@ -17,7 +17,6 @@ from megatron.core.transformer.spec_utils import import_module
+ from megatron.core.transformer.transformer_config import TransformerConfig
+ from megatron.training.arguments import core_transformer_config_from_args
+
+-from miles.utils.misc import load_function
+ from miles.utils.replay_base import routing_replay_manager
+
+ logger = logging.getLogger(__name__)
+@@ -61,6 +60,7 @@ def get_model_provider_func(
+ ):
+     # Support custom model provider path (similar to --custom-rm-path for reward models)
+     if getattr(args, "custom_model_provider_path", None):
++        from miles.utils.misc import load_function
+
+         def wrapped_model_provider(
+             pre_process: bool = True,
 @@ -110,6 +110,20 @@ def get_model_provider_func(
              provider.moe_router_bias_update_rate = args.moe_router_bias_update_rate
          if getattr(args, "moe_aux_loss_coeff", None) is not None:
@@ -477,10 +515,10 @@ index 2fc2a6359..6952d1fc1 100644
      return x.item()
 diff --git a/tests/test_npu_patch_megatron_adaptor.py b/tests/test_npu_patch_megatron_adaptor.py
 new file mode 100644
-index 000000000..4dc22acc7
+index 000000000..158ad7276
 --- /dev/null
 +++ b/tests/test_npu_patch_megatron_adaptor.py
-@@ -0,0 +1,116 @@
+@@ -0,0 +1,158 @@
 +import ast
 +import os
 +from pathlib import Path
@@ -597,6 +635,48 @@ index 000000000..4dc22acc7
 +
 +    assert len(decorators) == 3
 +    assert "# @torch.compile" not in source
++
++
++def test_convert_hf_to_torch_dist_imports_with_pinned_mbridge():
++    mcore_source = Path(os.environ["MCORE_SOURCE"]).resolve()
++    bridge_source = Path(os.environ["BRIDGE_SOURCE"]).resolve()
++    mbridge_source = Path(os.environ["MBRIDGE_SOURCE"]).resolve()
++    te_npu_source = Path(os.environ["TE_NPU_SOURCE"]).resolve()
++    mbridge_commit = subprocess.check_output(
++        ["git", "-C", str(mbridge_source), "rev-parse", "HEAD"], text=True
++    ).strip()
++    assert mbridge_commit == "89eb10887887bc74853f89a4de258c0702932a1c"
++    env = os.environ.copy()
++    env["PYTHONPATH"] = os.pathsep.join(
++        (str(ROOT), str(bridge_source / "src"), str(mcore_source))
++    )
++    probe_source = f"""
++import triton
++
++# Keep this a package-import test while avoiding device-driver construction on
++# the CPU-only verification host.
++triton.autotune = lambda *args, **kwargs: (lambda fn: fn)
++
++from importlib.metadata import version
++from pathlib import Path
++
++import tools.convert_hf_to_torch_dist
++import mbridge
++import transformer_engine
++
++assert version("mbridge") == "0.15.1"
++assert Path(mbridge.__file__).resolve().is_relative_to(Path({str(mbridge_source)!r}))
++assert Path(transformer_engine.__file__).resolve().is_relative_to(Path({str(te_npu_source)!r}))
++"""
++    probe = subprocess.run(
++        [sys.executable, "-c", probe_source],
++        env=env,
++        capture_output=True,
++        text=True,
++        timeout=60,
++    )
++
++    assert probe.returncode == 0, f"stdout:\n{probe.stdout}\nstderr:\n{probe.stderr}"
 diff --git a/tests/test_npu_patch_runtime_env.py b/tests/test_npu_patch_runtime_env.py
 new file mode 100644
 index 000000000..b8c3c8594

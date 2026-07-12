@@ -18,10 +18,12 @@ training-patch replay.
 | MegatronAdaptor | 56e18624ec632cf462c079c3873b8fbf2fbd3c77 (core_r0.17.0) | [Ascend MegatronAdaptor](https://gitcode.com/ascend/MegatronAdaptor) |
 | TransformerEngineNPU | cecf4a2a3ea7f31afb85cc6669f6b18adc56e5bd | [Ascend TransformerEngineNPU](https://gitcode.com/ascend/TransformerEngineNPU) |
 | Megatron-Bridge | 07d61e1547a8356cc34928f7eb20226d2f9db3fa | [radixark Megatron-Bridge](https://github.com/radixark/Megatron-Bridge) |
+| mbridge | 89eb10887887bc74853f89a4de258c0702932a1c (package 0.15.1) | [ISEEKYAN mbridge](https://github.com/ISEEKYAN/mbridge) |
 | Miles | 551d15914c89b1229b76fe806ca5f5aa5a826309 | [radixark Miles](https://github.com/radixark/miles) |
 | NVIDIA ModelOpt | 0.43.0 | [NVIDIA ModelOpt](https://github.com/NVIDIA/TensorRT-Model-Optimizer) |
 | OmegaConf | 2.3.0 | [OmegaConf](https://github.com/omry/omegaconf) |
 | datasets | >=2.20,<5 | [Hugging Face datasets](https://github.com/huggingface/datasets) |
+| tensorboard | 2.19.0 | [TensorBoard](https://github.com/tensorflow/tensorboard) |
 | transformers | 5.6.0 | [Hugging Face transformers](https://github.com/huggingface/transformers) |
 | huggingface-hub | 1.23.0 | [Hugging Face Hub](https://github.com/huggingface/huggingface_hub) |
 
@@ -51,6 +53,15 @@ distinct from its 26.0.0 product release:
     omegaconf==2.3.0
     datasets>=2.20,<5
     requests>=2.32,<3
+    tensorboard==2.19.0
+    absl-py==2.5.0
+    grpcio==1.82.1
+    markdown==3.10.2
+    protobuf==7.35.1
+    tensorboard-data-server==0.7.2
+    werkzeug==3.1.8
+    markupsafe==3.0.3
+    six==1.17.0
     triton-ascend>=3.2,<3.3
     EOF
 
@@ -102,6 +113,9 @@ Prepare immutable source checkouts:
     git clone https://github.com/radixark/Megatron-Bridge.git
     git -C Megatron-Bridge checkout --detach 07d61e1547a8356cc34928f7eb20226d2f9db3fa
 
+    git clone https://github.com/ISEEKYAN/mbridge.git
+    git -C mbridge checkout --detach 89eb10887887bc74853f89a4de258c0702932a1c
+
     git clone https://github.com/radixark/miles.git
     git -C miles checkout --detach 551d15914c89b1229b76fe806ca5f5aa5a826309
     cp -r miles/docker/npu_patch .
@@ -112,6 +126,7 @@ the build/test imports were installed in the constrained base step:
     python -m pip install -e <WORKSPACE>/Megatron-LM --no-build-isolation --no-deps
     python -m pip install -e <WORKSPACE>/TransformerEngineNPU --no-build-isolation --no-deps
     python -m pip install -e <WORKSPACE>/MegatronAdaptor --no-build-isolation --no-deps
+    python -m pip install -e <WORKSPACE>/mbridge --no-build-isolation --no-deps
     python -m pip install -e <WORKSPACE>/Megatron-Bridge --no-build-isolation --no-deps
     python -m pip install -e <WORKSPACE>/miles --no-build-isolation --no-deps
 
@@ -122,7 +137,7 @@ pinned source build metadata requires setuptools <80:
 
     python -m pip install -c /tmp/miles-option-b-constraints.txt \
       nvidia-modelopt==0.43.0 omegaconf==2.3.0 \
-      'datasets>=2.20,<5' 'requests>=2.32,<3'
+      'datasets>=2.20,<5' 'requests>=2.32,<3' tensorboard==2.19.0
 
 Verify that dependency resolution did not replace the framework stack:
 
@@ -139,6 +154,8 @@ Verify that dependency resolution did not replace the framework stack:
         "huggingface-hub": "1.23.0",
         "nvidia-modelopt": "0.43.0",
         "omegaconf": "2.3.0",
+        "tensorboard": "2.19.0",
+        "mbridge": "0.15.1",
     }
     for distribution, required in exact.items():
         installed = version(distribution)
@@ -165,9 +182,12 @@ The Transformer Engine path check rejects an NVIDIA Transformer Engine wheel:
     import transformer_engine.pytorch
     import megatron_adaptor
     import megatron.core
+    import mbridge
 
     te_source = Path("<WORKSPACE>/TransformerEngineNPU").resolve()
     assert Path(transformer_engine.__file__).resolve().is_relative_to(te_source)
+    mbridge_source = Path("<WORKSPACE>/mbridge").resolve()
+    assert Path(mbridge.__file__).resolve().is_relative_to(mbridge_source)
     PY
 
 MindSpeed is not part of this foundation. Do not install it alongside
@@ -181,16 +201,21 @@ MegatronAdaptor and do not restore the removed MindSpeed patch or aliases.
 
 The Miles patch imports megatron_adaptor at the package bootstrap and before
 Mcore in every direct Megatron process entry. There is no supported
-repatch(args) replacement, and the patch does not disable torch.compile. The
-Mcore patch contains only the NPU tensor-type compatibility gap and its focused
-test. The Bridge patch executes AutoMapping classification for standard Mcore
-TE identities and adapts Mcore 0.17's replicated uneven-DTensor gather back to
-the plain full tensor expected by Bridge export.
+repatch(args) replacement, and the patch does not disable torch.compile. It
+uses Mcore 0.17's tokenizer padding helper and defers Ray import to the custom
+model-provider branch, so weight-conversion module import does not require the
+rollout stack. The Mcore patch contains only the NPU tensor-type compatibility
+gap and its focused test. The Bridge patch executes AutoMapping classification
+for standard Mcore TE identities and adapts Mcore 0.17's replicated
+uneven-DTensor gather back to the plain full tensor expected by Bridge export.
 
 ## Focused Patch Tests
 
     cd <WORKSPACE>/miles
     MCORE_SOURCE=<WORKSPACE>/Megatron-LM \
+    BRIDGE_SOURCE=<WORKSPACE>/Megatron-Bridge \
+    MBRIDGE_SOURCE=<WORKSPACE>/mbridge \
+    TE_NPU_SOURCE=<WORKSPACE>/TransformerEngineNPU \
       python -m pytest -q -o addopts='' tests/test_npu_patch_megatron_adaptor.py
     python -m pytest -q -o addopts='' tests/test_npu_patch_runtime_env.py
 
