@@ -1,9 +1,8 @@
 diff --git a/miles/backends/experimental/fsdp_utils/update_weight_utils.py b/miles/backends/experimental/fsdp_utils/update_weight_utils.py
-index 98000e7..94fb71d 100644
+index 98000e7d3..94fb71da5 100644
 --- a/miles/backends/experimental/fsdp_utils/update_weight_utils.py
 +++ b/miles/backends/experimental/fsdp_utils/update_weight_utils.py
-@@ -234,12 +234,12 @@ class UpdateWeightFromDistributed(UpdateWeight):
-                     i * self.args.rollout_num_gpus_per_engine + 1,
+@@ -235,10 +235,10 @@ class UpdateWeightFromDistributed(UpdateWeight):
                      world_size,
                      self._group_name,
 -                    backend="nccl",
@@ -16,75 +15,45 @@ index 98000e7..94fb71d 100644
 +                backend="hccl",
                  init_method=f"tcp://{master_address}:{master_port}",
                  world_size=world_size,
-                 rank=0,
 diff --git a/miles/backends/megatron_utils/__init__.py b/miles/backends/megatron_utils/__init__.py
-index 879b689..2f30a4b 100644
+index 879b689c8..230e50630 100644
 --- a/miles/backends/megatron_utils/__init__.py
 +++ b/miles/backends/megatron_utils/__init__.py
-@@ -1,6 +1,7 @@
+@@ -1,4 +1,5 @@
  import logging
  
++import megatron_adaptor
  import torch
-+import mindspeed.megatron_adaptor
  
- try:
-     import deep_ep
 diff --git a/miles/backends/megatron_utils/actor.py b/miles/backends/megatron_utils/actor.py
-index 54ca4b8..3f79e49 100644
+index 54ca4b81a..a1f6f7334 100644
 --- a/miles/backends/megatron_utils/actor.py
 +++ b/miles/backends/megatron_utils/actor.py
-@@ -39,12 +39,14 @@ from .parallel import verify_megatron_parallel_state
- from .replay_utils import get_register_replay_list_func
+@@ -40,5 +40,5 @@ from .replay_utils import get_register_replay_list_func
  from .update_weight.common import named_params_and_buffers
  from .update_weight.update_weight_from_distributed.broadcast import UpdateWeightFromDistributed
 -from .update_weight.update_weight_from_distributed.p2p import UpdateWeightP2P
 +# from .update_weight.update_weight_from_distributed.p2p import UpdateWeightP2P
  from .update_weight.update_weight_from_tensor import UpdateWeightFromTensor
  
- logging.getLogger("megatron").setLevel(logging.WARNING)
- 
- logger = logging.getLogger(__name__)
-+import mindspeed.megatron_adaptor
-+from mindspeed.megatron_adaptor import repatch
- 
- 
- class MegatronTrainRayActor(TrainRayActor):
-@@ -58,7 +60,7 @@ class MegatronTrainRayActor(TrainRayActor):
-         monkey_patch_torch_dist()
+@@ -59,5 +59,4 @@ class MegatronTrainRayActor(TrainRayActor):
  
          super().init(args, role, with_ref)
 -
-+        repatch(args)
          init(args)
  
-         if args.dumper_enable:
-@@ -598,7 +600,7 @@ class MegatronTrainRayActor(TrainRayActor):
-         group_name = "actor_critic"
+@@ -599,5 +598,5 @@ class MegatronTrainRayActor(TrainRayActor):
          world_size = 2
          self._actor_critic_groups = init_process_group(
 -            backend="nccl",
 +            backend="hccl",
              init_method=f"tcp://{master_address}:{master_port}",
              world_size=world_size,
-             rank=0 if self.role == "actor" else 1,
-diff --git a/miles/backends/megatron_utils/initialize.py b/miles/backends/megatron_utils/initialize.py
-index dd3415c..1552717 100644
---- a/miles/backends/megatron_utils/initialize.py
-+++ b/miles/backends/megatron_utils/initialize.py
-@@ -13,6 +13,7 @@ from miles.backends.training_utils.parallel import get_parallel_state, set_paral
- from .parallel import create_megatron_parallel_state
- 
- logger = logging.getLogger(__name__)
-+import mindspeed.megatron_adaptor
- 
- 
- def _set_random_seed(
 diff --git a/miles/backends/megatron_utils/model.py b/miles/backends/megatron_utils/model.py
-index 5d2503d..667051e 100644
+index 5d2503dab..667051e14 100644
 --- a/miles/backends/megatron_utils/model.py
 +++ b/miles/backends/megatron_utils/model.py
-@@ -143,6 +143,11 @@ def setup_model_and_optimizer(
-     config = OptimizerConfig(**kwargs)
+@@ -144,4 +144,9 @@ def setup_model_and_optimizer(
      config.timers = None
  
 +    for model_item in model:
@@ -94,13 +63,11 @@ index 5d2503d..667051e 100644
 +
      optimizer = get_megatron_optimizer(
          config=config,
-         model_chunks=model,
 diff --git a/miles/backends/megatron_utils/model_provider.py b/miles/backends/megatron_utils/model_provider.py
-index 45adc86..329c050 100644
+index 45adc8679..329c05037 100644
 --- a/miles/backends/megatron_utils/model_provider.py
 +++ b/miles/backends/megatron_utils/model_provider.py
-@@ -110,6 +110,20 @@ def get_model_provider_func(
-             provider.moe_router_bias_update_rate = args.moe_router_bias_update_rate
+@@ -111,4 +111,18 @@ def get_model_provider_func(
          if getattr(args, "moe_aux_loss_coeff", None) is not None:
              provider.moe_aux_loss_coeff = args.moe_aux_loss_coeff
 +
@@ -119,13 +86,11 @@ index 45adc86..329c050 100644
 +            setattr(provider, key, value)
          provider.finalize()
  
-         def wrapped_bridge_provider(
 diff --git a/miles/backends/megatron_utils/update_weight/common.py b/miles/backends/megatron_utils/update_weight/common.py
-index 677f93c..79ee576 100644
+index 677f93c62..79ee57664 100644
 --- a/miles/backends/megatron_utils/update_weight/common.py
 +++ b/miles/backends/megatron_utils/update_weight/common.py
-@@ -154,8 +154,8 @@ def named_params_and_buffers(
- def _maybe_get_cpu_backup(x: torch.Tensor):
+@@ -155,6 +155,6 @@ def _maybe_get_cpu_backup(x: torch.Tensor):
      from torch_memory_saver import torch_memory_saver
  
 -    if (cpu_tensor := torch_memory_saver.get_cpu_backup(x)) is not None:
@@ -134,13 +99,11 @@ index 677f93c..79ee576 100644
 +    #     return cpu_tensor
  
      return x
- 
 diff --git a/miles/backends/megatron_utils/update_weight/update_weight_from_distributed/broadcast.py b/miles/backends/megatron_utils/update_weight/update_weight_from_distributed/broadcast.py
-index 51afeda..c31c04a 100644
+index 51afedac4..c31c04a46 100644
 --- a/miles/backends/megatron_utils/update_weight/update_weight_from_distributed/broadcast.py
 +++ b/miles/backends/megatron_utils/update_weight/update_weight_from_distributed/broadcast.py
-@@ -129,12 +129,12 @@ def connect_rollout_engines_from_distributed(
-                 rank_cursor,
+@@ -130,10 +130,10 @@ def connect_rollout_engines_from_distributed(
                  world_size,
                  group_name,
 -                backend="nccl",
@@ -153,13 +116,11 @@ index 51afeda..c31c04a 100644
 +        backend="hccl",
          init_method=f"tcp://{master_address}:{master_port}",
          world_size=world_size,
-         rank=0,
 diff --git a/miles/ray/actor_group.py b/miles/ray/actor_group.py
-index 669988b..723113a 100644
+index 669988b52..723113a69 100644
 --- a/miles/ray/actor_group.py
 +++ b/miles/ray/actor_group.py
-@@ -85,7 +85,9 @@ class RayTrainGroup:
- 
+@@ -86,5 +86,7 @@ class RayTrainGroup:
              actor_impl = FSDPTrainRayActor
  
 -        TrainRayActor = ray.remote(num_gpus=1, runtime_env={"env_vars": env_vars})(actor_impl)
@@ -168,9 +129,7 @@ index 669988b..723113a 100644
 +        device_name = "NPU"
  
          # Create worker actors
-         actor_handles = []
-@@ -93,11 +95,12 @@ class RayTrainGroup:
-         for rank in range(world_size):
+@@ -94,9 +96,10 @@ class RayTrainGroup:
              actor = TrainRayActor.options(
                  num_cpus=num_gpus_per_actor,
 -                num_gpus=num_gpus_per_actor,
@@ -182,13 +141,11 @@ index 669988b..723113a 100644
 +                resources={device_name: num_gpus_per_actor}
              ).remote(world_size, rank, master_addr, master_port)
              if rank == 0:
-                 master_addr, master_port = ray.get(actor.get_master_addr_and_port.remote())
 diff --git a/miles/ray/placement_group.py b/miles/ray/placement_group.py
-index bf8244b..12442d9 100644
+index bf8244b90..12442d9d6 100644
 --- a/miles/ray/placement_group.py
 +++ b/miles/ray/placement_group.py
-@@ -14,10 +14,12 @@ from .rollout import RolloutManager
- logger = logging.getLogger(__name__)
+@@ -15,8 +15,10 @@ logger = logging.getLogger(__name__)
  
  
 -@ray.remote(num_gpus=1)
@@ -201,9 +158,7 @@ index bf8244b..12442d9 100644
 +        return ray.util.get_node_ip_address(), ray.get_runtime_context().get_accelerator_ids()["NPU"][0]
  
  
- def sort_key(x):
-@@ -38,12 +40,15 @@ def sort_key(x):
-             # representation that allows for sorting.
+@@ -39,10 +41,13 @@ def sort_key(x):
              node_ip_parts = [ord(c) for c in node_identifier]
  
 -    return (node_ip_parts, gpu_id)
@@ -219,9 +174,7 @@ index bf8244b..12442d9 100644
 +    bundles = [{device_name: 1, "CPU": 1} for _ in range(num_gpus)]
      pg = placement_group(bundles, strategy="PACK")
      num_bundles = len(bundles)
- 
-@@ -56,7 +61,8 @@ def _create_placement_group(num_gpus):
-                 scheduling_strategy=PlacementGroupSchedulingStrategy(
+@@ -57,5 +62,6 @@ def _create_placement_group(num_gpus):
                      placement_group=pg,
                      placement_group_bundle_index=i,
 -                )
@@ -229,9 +182,7 @@ index bf8244b..12442d9 100644
 +                resources={device_name: 1}
              ).remote()
          )
-     gpu_ids = ray.get([actor.get_ip_and_gpu_id.remote() for actor in info_actors])
-@@ -174,8 +180,9 @@ async def create_training_models(args, pgs, rollout_manager):
- 
+@@ -175,6 +181,7 @@ async def create_training_models(args, pgs, rollout_manager):
  
  def create_rollout_manager(args, pg):
 +    device_name = "NPU"
@@ -240,13 +191,11 @@ index bf8244b..12442d9 100644
 +        num_cpus=1, resources={device_name: 0}, **(compute_ray_pin_head_options() if args.pin_rollout_manager_to_head else {})
      ).remote(args, pg)
  
-     # calculate num_rollout from num_epoch
 diff --git a/miles/ray/rollout.py b/miles/ray/rollout.py
-index ded71b5..89f515c 100644
+index ded71b511..89f515c9d 100644
 --- a/miles/ray/rollout.py
 +++ b/miles/ray/rollout.py
-@@ -140,14 +140,15 @@ class ServerGroup:
-                 }.items()
+@@ -141,12 +141,13 @@ class ServerGroup:
              }
              env_vars.update(dumper_utils.get_sglang_env(self.args))
 -
@@ -262,9 +211,7 @@ index ded71b5..89f515c 100644
 +                resources={device_name: num_gpus}
              ).remote(
                  self.args,
-                 rank=global_rank,
-@@ -371,7 +372,9 @@ class RolloutManager:
-             init_http_client(args)
+@@ -372,5 +373,7 @@ class RolloutManager:
              self.servers = start_rollout_servers(args, pg)
              _start_session_server(args)
 -        self.rollout_engine_lock = Lock.options(num_cpus=1, num_gpus=0).remote()
@@ -273,13 +220,11 @@ index ded71b5..89f515c 100644
 +        self.rollout_engine_lock = Lock.options(num_cpus=1, resources={device_name: 0}).remote()
          self.rollout_id = -1
  
-         self._metric_checker = MetricChecker.maybe_create(args)
 diff --git a/miles/ray/train_actor.py b/miles/ray/train_actor.py
-index a4145ca..3334032 100644
+index a4145ca27..33340323e 100644
 --- a/miles/ray/train_actor.py
 +++ b/miles/ray/train_actor.py
-@@ -20,10 +20,17 @@ logger = logging.getLogger(__name__)
- 
+@@ -21,8 +21,15 @@ logger = logging.getLogger(__name__)
  def get_local_gpu_id():
      cvd = os.environ.get("CUDA_VISIBLE_DEVICES", None)
 +    # if cvd is None:
@@ -297,35 +242,29 @@ index a4145ca..3334032 100644
 +        return cvd.split(",").index(str(device_ids[0]))
  
  
- class TrainRayActor(RayActor):
 diff --git a/miles/utils/arguments.py b/miles/utils/arguments.py
-index abfa137..7c5fe00 100644
+index abfa137ac..7c5fe007a 100644
 --- a/miles/utils/arguments.py
 +++ b/miles/utils/arguments.py
-@@ -119,7 +119,7 @@ def get_miles_extra_args_provider(add_custom_arguments=None):
-                 ),
+@@ -120,5 +120,5 @@ def get_miles_extra_args_provider(add_custom_arguments=None):
              )
  
 -            reset_arg(parser, "--distributed-backend", type=str, default="nccl")
 +            reset_arg(parser, "--distributed-backend", type=str, default="hccl")
              reset_arg(parser, "--distributed-timeout-minutes", type=int, default=10)
  
-             return parser
-@@ -2252,7 +2252,7 @@ def hf_validate_args(args, hf_config):
-         ("tie_word_embeddings", "untie_embeddings_and_output_weights", lambda x, y: not x == y),
+@@ -2253,5 +2253,5 @@ def hf_validate_args(args, hf_config):
          (
              "rms_norm_eps",
 -            "norm_epsilon" if os.getenv("DEPRECATED_MEGATRON_COMPATIBLE", "0") == "1" else "layernorm_epsilon",
 +            "norm_epsilon" if os.getenv("DEPRECATED_MEGATRON_COMPATIBLE", "0") == "1" else "norm_epsilon",
              equal,
          ),
-         ("rope_theta", "rotary_base", equal),
 diff --git a/miles/utils/debug_utils/run_megatron/worker/main.py b/miles/utils/debug_utils/run_megatron/worker/main.py
-index 359a51c..78e697e 100644
+index 359a51c1d..78e697e7c 100644
 --- a/miles/utils/debug_utils/run_megatron/worker/main.py
 +++ b/miles/utils/debug_utils/run_megatron/worker/main.py
-@@ -117,9 +117,9 @@ def _parse_args() -> tuple[argparse.Namespace, WorkerScriptArgs]:
- 
+@@ -118,7 +118,7 @@ def _parse_args() -> tuple[argparse.Namespace, WorkerScriptArgs]:
  
  def _initialize_megatron(args: argparse.Namespace) -> None:
 -    torch.distributed.init_process_group(backend="nccl")
@@ -335,13 +274,11 @@ index 359a51c..78e697e 100644
 +    torch.npu.set_device(local_rank)
  
      args.hf_checkpoint = str(args.script_hf_checkpoint)
-     args.__dict__.setdefault("megatron_to_hf_mode", "raw")
 diff --git a/miles/utils/external_utils/command_utils.py b/miles/utils/external_utils/command_utils.py
-index d016e01..1b5f95c 100644
+index d016e01ac..1b5f95c93 100644
 --- a/miles/utils/external_utils/command_utils.py
 +++ b/miles/utils/external_utils/command_utils.py
-@@ -193,6 +193,122 @@ def execute_train(
-         )
+@@ -194,4 +194,120 @@ def execute_train(
  
  
 +def execute_train_npu(
@@ -462,71 +399,138 @@ index d016e01..1b5f95c 100644
 +
  def _parse_extra_env_vars(text: str):
      try:
-         return json.loads(text)
 diff --git a/miles/utils/ppo_utils.py b/miles/utils/ppo_utils.py
-index 4c09dc5..369d8fd 100644
+index 4c09dc508..369d8fda5 100644
 --- a/miles/utils/ppo_utils.py
 +++ b/miles/utils/ppo_utils.py
-@@ -10,7 +10,7 @@ import torch.nn.functional as F
- from miles.backends.training_utils.parallel import get_parallel_state
+@@ -11,5 +11,5 @@ from miles.backends.training_utils.parallel import get_parallel_state
  
  
 -@torch.compile(dynamic=True)
 +# @torch.compile(dynamic=True)
  def compute_approx_kl(
      log_probs: torch.Tensor,
-     log_probs_base: torch.Tensor,
-@@ -123,7 +123,7 @@ def compute_gspo_kl(
-     return ppo_kl
+@@ -124,5 +124,5 @@ def compute_gspo_kl(
  
  
 -@torch.compile(dynamic=True)
 +# @torch.compile(dynamic=True)
  def compute_policy_loss(
      ppo_kl: torch.Tensor,
-     advantages: torch.Tensor,
-@@ -166,7 +166,7 @@ class _VocabParallelEntropy(torch.autograd.Function):
-     @staticmethod
+@@ -167,5 +167,5 @@ class _VocabParallelEntropy(torch.autograd.Function):
      def forward(ctx, vocab_parallel_logits: torch.Tensor, process_group: dist.ProcessGroup) -> torch.Tensor:
  
 -        @torch.compile(dynamic=True)
 +        # @torch.compile(dynamic=True)
          def mul_reduce(a, b):
              return (a * b).sum(dim=-1, keepdim=True)
- 
 diff --git a/miles/utils/reloadable_process_group.py b/miles/utils/reloadable_process_group.py
-index af4878b..f796a4e 100644
+index af4878b4e..f796a4ee7 100644
 --- a/miles/utils/reloadable_process_group.py
 +++ b/miles/utils/reloadable_process_group.py
-@@ -154,7 +154,7 @@ class ReloadableProcessGroup(torch.distributed.ProcessGroup):
-         for reloadable_group in reloadable_groups:
+@@ -155,5 +155,5 @@ class ReloadableProcessGroup(torch.distributed.ProcessGroup):
              if reloadable_group.group is not None:
                  continue
 -            group = old_new_group(ranks=reloadable_group.group_info["ranks"], backend="nccl")
 +            group = old_new_group(ranks=reloadable_group.group_info["ranks"], backend="hccl")
              reloadable_group.group = group
  
-     def rank(self) -> int:
 diff --git a/miles/utils/tensor_backper.py b/miles/utils/tensor_backper.py
-index 2fc2a63..6952d1f 100644
+index 2fc2a6359..6952d1fc1 100644
 --- a/miles/utils/tensor_backper.py
 +++ b/miles/utils/tensor_backper.py
-@@ -110,6 +110,6 @@ def _compute_hash_tensor(x: torch.Tensor):
-     # Not a real/good hash, but pretty fast
+@@ -111,5 +111,5 @@ def _compute_hash_tensor(x: torch.Tensor):
      x = x.contiguous()
      x = x.view(-1)
 -    x = x.view(torch.uint32)
 +    x = x.view(torch.int32)
      x = x.sum()
      return x.item()
+diff --git a/tests/test_npu_patch_megatron_adaptor.py b/tests/test_npu_patch_megatron_adaptor.py
+new file mode 100644
+index 000000000..2a3baf58b
+--- /dev/null
++++ b/tests/test_npu_patch_megatron_adaptor.py
+@@ -0,0 +1,58 @@
++import os
++from pathlib import Path
++import subprocess
++import sys
++
++
++ROOT = Path(__file__).resolve().parents[1]
++BOOTSTRAP = ROOT / "miles" / "backends" / "megatron_utils" / "__init__.py"
++MEGATRON_ENTRYPOINTS = (
++    BOOTSTRAP,
++    ROOT / "miles" / "backends" / "megatron_utils" / "actor.py",
++    ROOT / "miles" / "backends" / "megatron_utils" / "initialize.py",
++    ROOT / "tools" / "convert_hf_to_torch_dist.py",
++    ROOT / "train.py",
++)
++
++
++def test_megatron_adaptor_has_one_early_bootstrap_and_no_mindspeed_api():
++    sources = {path: path.read_text(encoding="utf-8") for path in MEGATRON_ENTRYPOINTS}
++
++    assert sources[BOOTSTRAP].count("import megatron_adaptor") == 1
++    assert sum(text.count("import megatron_adaptor") for text in sources.values()) == 1
++    assert all("mindspeed" not in text.lower() for text in sources.values())
++    assert all("repatch" not in text for text in sources.values())
++
++    bootstrap = sources[BOOTSTRAP]
++    assert bootstrap.index("import megatron_adaptor") < bootstrap.index("from megatron.bridge")
++
++
++def test_bootstrap_patches_jit_before_mcore_binds_jit_fuser(tmp_path):
++    mcore_source = Path(os.environ["MCORE_SOURCE"]).resolve()
++    (tmp_path / "megatron_adaptor.py").write_text(
++        "import torch\n"
++        "def dummy_compile(fn):\n"
++        "    def wrapper(*args, **kwargs):\n"
++        "        return fn(*args, **kwargs)\n"
++        "    return wrapper\n"
++        "torch.jit.script = dummy_compile\n"
++        "torch.compile = dummy_compile\n",
++        encoding="utf-8",
++    )
++    env = os.environ.copy()
++    env["PYTHONPATH"] = os.pathsep.join((str(tmp_path), str(ROOT), str(mcore_source)))
++    probe = subprocess.run(
++        [
++            sys.executable,
++            "-c",
++            "import miles.backends.megatron_utils; "
++            "from megatron.core.jit import jit_fuser; "
++            "assert jit_fuser.__module__ == 'megatron_adaptor'",
++        ],
++        env=env,
++        capture_output=True,
++        text=True,
++        timeout=30,
++    )
++
++    assert probe.returncode == 0, probe.stderr
 diff --git a/tests/test_npu_patch_runtime_env.py b/tests/test_npu_patch_runtime_env.py
 new file mode 100644
-index 0000000..90d9f2c
+index 000000000..b8c3c8594
 --- /dev/null
 +++ b/tests/test_npu_patch_runtime_env.py
-@@ -0,0 +1,37 @@
+@@ -0,0 +1,50 @@
 +import json
 +import re
++import sys
++from types import ModuleType
++
++
++if "ray" not in sys.modules:
++    ray = ModuleType("ray")
++    ray.remote = lambda **kwargs: lambda fn: fn
++    ray_util = ModuleType("ray.util")
++    ray_scheduling = ModuleType("ray.util.scheduling_strategies")
++    ray_scheduling.NodeAffinitySchedulingStrategy = object
++    sys.modules["ray"] = ray
++    sys.modules["ray.util"] = ray_util
++    sys.modules["ray.util.scheduling_strategies"] = ray_scheduling
 +
 +from miles.utils.external_utils import command_utils
 +
@@ -563,27 +567,17 @@ index 0000000..90d9f2c
 +    assert env["ATB_CUSTOM_PATH"] == "/opt/atb/custom"
 +    assert env["PYTHONPATH"] == "/workspace/Megatron-LM:/opt/existing/python"
 diff --git a/tools/convert_hf_to_torch_dist.py b/tools/convert_hf_to_torch_dist.py
-index 250af0b..8e407b4 100644
+index 250af0b68..17c3aedf7 100644
 --- a/tools/convert_hf_to_torch_dist.py
 +++ b/tools/convert_hf_to_torch_dist.py
-@@ -17,6 +17,7 @@ from miles.backends.megatron_utils.model_provider import get_model_provider_func
- from miles.utils.logging_utils import configure_logger
- from miles.utils.memory_utils import print_memory
- from miles_plugins.models.hf_attention import _load_hf_config
-+import mindspeed.megatron_adaptor
- 
- 
- def add_convertion_args(parser):
-@@ -94,17 +95,17 @@ def main():
-     local_rank = int(os.getenv("LOCAL_RANK") or os.getenv("SLURM_LOCALID") or 0)
+@@ -95,5 +95,5 @@ def main():
      global_rank = int(os.getenv("RANK") or os.getenv("SLURM_PROCID") or 0)
  
 -    torch.cuda.set_device(local_rank)
 +    torch.npu.set_device(local_rank)
      os.environ.setdefault("WORLD_SIZE", str(world_size))
      os.environ.setdefault("RANK", str(global_rank))
-     os.environ.setdefault("LOCAL_RANK", str(local_rank))
-     os.environ.setdefault("MASTER_ADDR", "localhost")
+@@ -102,8 +102,8 @@ def main():
      os.environ.setdefault("MASTER_PORT", "12355")
      dist.init_process_group(
 -        backend="nccl",
@@ -594,9 +588,7 @@ index 250af0b..8e407b4 100644
 +        device_id=torch.device(f"npu:{local_rank}"),
      )
      args = get_args()
-     init(args)
-@@ -122,9 +123,9 @@ def main():
-     print(f"Model loaded: {hf_model_path}")
+@@ -123,7 +123,7 @@ def main():
  
      print_memory("after loading model")
 -    torch.cuda.synchronize()
@@ -606,16 +598,3 @@ index 250af0b..8e407b4 100644
 +    torch.npu.empty_cache()
  
      save_checkpoint(1, model, None, None, 0)
- 
-diff --git a/train.py b/train.py
-index 9a4a295..0512bee 100644
---- a/train.py
-+++ b/train.py
-@@ -8,6 +8,7 @@ from miles.utils.async_utils import eager_create_task
- from miles.utils.logging_utils import configure_logger
- from miles.utils.misc import should_run_periodic_action
- from miles.utils.tracking_utils import finish_tracking, init_tracking
-+import mindspeed.megatron_adaptor
- 
- 
- async def train(args):

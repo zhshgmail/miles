@@ -1,83 +1,161 @@
-diff --git a/src/megatron/bridge/models/conversion/param_mapping.py b/src/megatron/bridge/models/conversion/param_mapping.py
-index 63b4cc3..13ecfde 100644
---- a/src/megatron/bridge/models/conversion/param_mapping.py
-+++ b/src/megatron/bridge/models/conversion/param_mapping.py
-@@ -1200,17 +1200,21 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
-             "LinearCrossEntropyModule",
-             "TEColumnParallelLinear",
-             "TELayerNormColumnParallelLinear",
-+            "MindSpeedTELayerNormColumnParallelLinear",
-             "InferenceLayerNormColumnParallelLinear",
-             "TEColumnParallelGroupedLinear",
-+            "MindSpeedTEColumnParallelGroupedLinear",
-             "VocabParallelEmbedding",
-             "DotProductAttention",  # for attention sink only
-             "TEDotProductAttention",  # for attention sink only
-+            "MindSpeedTEDotProductAttention",
-         },
-         "row": {
-             "RowParallelLinear",
-             "TERowParallelLinear",
-             "InferenceRowParallelLinear",
-             "TERowParallelGroupedLinear",
-+            "MindSpeedTERowParallelGroupedLinear",
-         },
-         "replicated": {
-             # Normalization layers
-@@ -1282,7 +1286,11 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
-         # Handle fused modules like TELayerNormColumnParallelLinear
-         # These modules have both column-parallel weights (weight, bias)
-         # and replicated layer norm weights (layer_norm_weight, layer_norm_bias)
--        if module_type in ("TELayerNormColumnParallelLinear", "InferenceLayerNormColumnParallelLinear"):
-+        if module_type in (
-+            "TELayerNormColumnParallelLinear",
-+            "MindSpeedTELayerNormColumnParallelLinear",
-+            "InferenceLayerNormColumnParallelLinear",
-+        ):
-             # Check the actual parameter name to determine the correct parallelism type
-             if self.megatron_param and (
-                 self.megatron_param.endswith("layer_norm_weight") or self.megatron_param.endswith("layer_norm_bias")
-@@ -1313,7 +1321,7 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
-             return "replicated"
- 
-         # Check parallel_mode for TELinear
--        if module_type == "TELinear":
-+        if module_type in ("TELinear", "MindSpeedTELinear"):
-             if module.parallel_mode == "column":
-                 return "column"
-             elif module.parallel_mode == "row":
-diff --git a/tests/unit_tests/models/test_param_mapping.py b/tests/unit_tests/models/test_param_mapping.py
-index 6050ea2..925ba87 100644
---- a/tests/unit_tests/models/test_param_mapping.py
-+++ b/tests/unit_tests/models/test_param_mapping.py
-@@ -243,6 +243,30 @@ class TestRowParallelMapping:
- 
- 
- class TestAutoMapping:
-+    @pytest.mark.parametrize(
-+        ("module_name", "megatron_param", "parallel_mode", "expected"),
-+        [
-+            ("MindSpeedTELayerNormColumnParallelLinear", "linear.weight", None, "column"),
-+            ("MindSpeedTELayerNormColumnParallelLinear", "linear.layer_norm_weight", None, "replicated"),
-+            ("MindSpeedTEColumnParallelGroupedLinear", "linear.weight", None, "column"),
-+            ("MindSpeedTERowParallelGroupedLinear", "linear.weight", None, "row"),
-+            ("MindSpeedTEDotProductAttention", "attention.weight", None, "column"),
-+            ("MindSpeedTELinear", "linear.weight", "column", "column"),
-+            ("MindSpeedTELinear", "linear.weight", "row", "row"),
-+            ("MindSpeedTELinear", "linear.weight", "none", "replicated"),
-+            ("InferenceLayerNormColumnParallelLinear", "linear.weight", None, "column"),
-+            ("InferenceRowParallelLinear", "linear.weight", None, "row"),
-+        ],
+diff --git a/src/megatron/bridge/models/conversion/_mcore_compat.py b/src/megatron/bridge/models/conversion/_mcore_compat.py
+new file mode 100644
+index 000000000..e66ac5777
+--- /dev/null
++++ b/src/megatron/bridge/models/conversion/_mcore_compat.py
+@@ -0,0 +1,10 @@
++"""Compatibility helpers for the pinned Megatron Core runtime."""
++
++
++def uneven_dtensor_to_full_tensor(dtensor):
++    """Return the local full tensor produced by Mcore 0.17's replicated gather."""
++    from megatron.core.distributed.fsdp.src.megatron_fsdp.uneven_dtensor import (
++        gather_uneven_dtensor_to_full_tensor,
 +    )
-+    def test_detect_mindspeed_and_inference_module_types(
-+        self, module_name, megatron_param, parallel_mode, expected
++
++    return gather_uneven_dtensor_to_full_tensor(dtensor).to_local()
+diff --git a/src/megatron/bridge/models/conversion/model_bridge.py b/src/megatron/bridge/models/conversion/model_bridge.py
+index e3b0acaf4..fff135fdf 100644
+--- a/src/megatron/bridge/models/conversion/model_bridge.py
++++ b/src/megatron/bridge/models/conversion/model_bridge.py
+@@ -1250,8 +1250,5 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
+                 continue
+             if isinstance(task.param_weight, DTensor):
+-                from megatron.core.distributed.fsdp.src.megatron_fsdp.uneven_dtensor import (
+-                    uneven_dtensor_to_full_tensor,
+-                )
+-
++                from megatron.bridge.models.conversion._mcore_compat import uneven_dtensor_to_full_tensor
+                 megatron_weights = uneven_dtensor_to_full_tensor(task.param_weight)
+             else:
+diff --git a/tests/unit_tests/models/test_option_b_mcore_compat.py b/tests/unit_tests/models/test_option_b_mcore_compat.py
+new file mode 100644
+index 000000000..582e5eff3
+--- /dev/null
++++ b/tests/unit_tests/models/test_option_b_mcore_compat.py
+@@ -0,0 +1,125 @@
++import ast
++import importlib.util
++import os
++from pathlib import Path
++import sys
++
++import torch
++
++
++ROOT = Path(__file__).resolve().parents[3]
++COMPAT_PATH = ROOT / "src" / "megatron" / "bridge" / "models" / "conversion" / "_mcore_compat.py"
++PARAM_MAPPING_PATH = ROOT / "src" / "megatron" / "bridge" / "models" / "conversion" / "param_mapping.py"
++
++
++def _load_compat_module():
++    spec = importlib.util.spec_from_file_location("option_b_mcore_compat", COMPAT_PATH)
++    assert spec is not None and spec.loader is not None
++    module = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(module)
++    return module
++
++
++def test_standard_te_mapping_contract_has_no_mindspeed_aliases():
++    source = PARAM_MAPPING_PATH.read_text(encoding="utf-8")
++    tree = ast.parse(source)
++    auto_mapping = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "AutoMapping")
++    class_source = ast.get_source_segment(source, auto_mapping)
++
++    for name in (
++        "TENorm",
++        "TELinear",
++        "TELayerNormColumnParallelLinear",
++        "TEColumnParallelLinear",
++        "TERowParallelLinear",
++        "TEDotProductAttention",
 +    ):
-+        attributes = {} if parallel_mode is None else {"parallel_mode": parallel_mode}
-+        module_type = type(module_name, (torch.nn.Module,), attributes)
-+        mapping = AutoMapping(megatron_param=megatron_param, hf_param="hf.weight")
++        assert name in class_source
++    assert "MindSpeed" not in class_source
 +
-+        assert mapping._detect_parallelism_type(module_type()) == expected
 +
-     def test_detect_parallelism_type(self, mock_distributed_env, transformer_config):
-         mock_distributed_env()
-         mapping = AutoMapping(megatron_param="some.weight", hf_param="hf.weight")
++def test_uneven_dtensor_adapter_matches_mcore_017_gather_layout(monkeypatch):
++    mcore_source = Path(os.environ["MCORE_SOURCE"]).resolve()
++    sys.path.insert(0, str(mcore_source))
++    try:
++        from megatron.core.distributed.fsdp.src.megatron_fsdp import uneven_dtensor
++    finally:
++        sys.path.pop(0)
++
++    class FakeShard:
++        pass
++
++    class FakeStridedShard:
++        pass
++
++    class FakeReplicate:
++        pass
++
++    class FakeProcessGroup:
++        @staticmethod
++        def size():
++            return 2
++
++        @staticmethod
++        def rank():
++            return 0
++
++    class FakeMesh:
++        mesh_dim_names = ()
++
++        def get_group(self):
++            return FakeProcessGroup()
++
++    class Chunk:
++        offsets = [0]
++
++    class LocalMetadata:
++        __create_chunk_list__ = True
++
++    class FakeDTensor:
++        def __init__(self, local, *, shape, placements, device_mesh):
++            self._local = local
++            self._local_tensor = LocalMetadata()
++            self.shape = shape
++            self.placements = placements
++            self.device_mesh = device_mesh
++
++        def __create_chunk_list__(self):
++            return [Chunk()]
++
++        def to_local(self):
++            return self._local
++
++        @classmethod
++        def from_local(cls, local, *, placements, device_mesh):
++            return cls(local, shape=tuple(local.shape), placements=placements, device_mesh=device_mesh)
++
++    def fake_all_gather_object(output, local_info, group):
++        output[:] = [
++            local_info,
++            {"shape": [1], "offset": [2], "rank": 1},
++        ]
++
++    def fake_all_gather(output, local, group):
++        output[0].copy_(local)
++        output[1].copy_(torch.tensor([3.0]))
++
++    monkeypatch.setattr(uneven_dtensor, "DTensor", FakeDTensor)
++    monkeypatch.setattr(uneven_dtensor, "Shard", FakeShard)
++    monkeypatch.setattr(uneven_dtensor, "_StridedShard", FakeStridedShard)
++    monkeypatch.setattr(uneven_dtensor, "Replicate", FakeReplicate)
++    monkeypatch.setattr(uneven_dtensor.dist, "all_gather_object", fake_all_gather_object)
++    monkeypatch.setattr(uneven_dtensor.dist, "all_gather", fake_all_gather)
++
++    source = FakeDTensor(
++        torch.tensor([1.0, 2.0]),
++        shape=(3,),
++        placements=[FakeShard()],
++        device_mesh=FakeMesh(),
++    )
++    adapter = _load_compat_module()
++
++    result = adapter.uneven_dtensor_to_full_tensor(source)
++
++    assert isinstance(result, torch.Tensor)
++    assert torch.equal(result, torch.tensor([1.0, 2.0, 3.0]))

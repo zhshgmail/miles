@@ -1,146 +1,123 @@
 # Miles NPU Patch Installation Guide
 
-This guide provides instructions for installing Miles with NPU support, including all required dependencies and patches.
+This bundle targets the pinned Option B training foundation. The full Miles RL
+rollout stack remains a separate release gate and is not qualified by a clean
+training-patch replay.
 
-## Component Version Mapping
+## Version Contract
 
-| Component       | Version/Commit                           | Source                                                                                                              |
-| --------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Miles          | 551d15914c89b1229b76fe806ca5f5aa5a826309 | [GitHub](https://github.com/radixark/miles/tree/main)                                             |
-| SGLang          | sglang-miles | [GitHub](https://github.com/sgl-project/sglang/)                                             |
-| SGL Kernel NPU  | 2026.05.01                               | [GitHub](https://github.com/sgl-project/sgl-kernel-npu/releases/tag/2026.05.01)                                     |
-| Megatron-Bridge | 07d61e1547a8356cc34928f7eb20226d2f9db3fa | [GitHub](https://github.com/radixark/Megatron-Bridge)                                                                |
-| Megatron-LM     | 4716f75475c78e2fc2c6f0d3af095f1681b770b4 | [GitHub](https://github.com/radixark/Megatron-LM)                                                                   |
-| MindSpeed       | fc63de5c48426dd019c3b3f39e65f5bdf56e4086 | [GitCode](https://gitcode.com/Ascend/MindSpeed)                                                                     |
-| HDK             | 25.3.RC1                                 | [Ascend](https://www.hiascend.com/hardware/firmware-drivers/commercial?product=7\&model=33)                         |
-| CANN            | 8.5.0                                    | [Ascend](https://www.hiascend.com/developer/download/community/result?module=cann\&cann=8.5.0\&product=7\&model=33) |
+| Component | Required version or immutable ref | Source |
+| --- | --- | --- |
+| Python | >=3.10,<3.11 | [Python](https://www.python.org/) |
+| CANN | 9.0.0 | [Ascend CANN](https://www.hiascend.com/developer/download/community/result?module=cann) |
+| PyTorch | 2.7.1 | [PyTorch](https://pytorch.org/) |
+| torch-npu | product 26.0.0; branch v2.7.1-26.0.0; wheel 2.7.1.post4 | [Ascend PyTorch](https://gitcode.com/Ascend/pytorch) |
+| torchvision | 0.22.1 | [torchvision](https://github.com/pytorch/vision) |
+| Megatron-LM / Mcore | 963bf39218e8bb83a1203b40293358498322be50 (core_r0.17.0) | [NVIDIA Megatron-LM](https://github.com/NVIDIA/Megatron-LM) |
+| MegatronAdaptor | 56e18624ec632cf462c079c3873b8fbf2fbd3c77 (core_r0.17.0) | [Ascend MegatronAdaptor](https://gitcode.com/ascend/MegatronAdaptor) |
+| TransformerEngineNPU | cecf4a2a3ea7f31afb85cc6669f6b18adc56e5bd | [Ascend TransformerEngineNPU](https://gitcode.com/ascend/TransformerEngineNPU) |
+| Megatron-Bridge | 07d61e1547a8356cc34928f7eb20226d2f9db3fa | [radixark Megatron-Bridge](https://github.com/radixark/Megatron-Bridge) |
+| Miles | 551d15914c89b1229b76fe806ca5f5aa5a826309 | [radixark Miles](https://github.com/radixark/miles) |
+| transformers | 5.6.0 | [Hugging Face transformers](https://github.com/huggingface/transformers) |
+| huggingface-hub | 1.23.0 | [Hugging Face Hub](https://github.com/huggingface/huggingface_hub) |
 
-## Preparing the Running Environment
+Record the exact Python patch version, image digest, OS, driver, firmware, and
+HDK versions as runtime evidence. Do not combine CANN 8.5 or torch-npu 2.8
+artifacts with this contract.
 
-### Python Version
+## Base Runtime
 
-Only `python==3.11` is supported currently.
+Create a clean Python 3.10 environment on a CANN 9.0.0 host:
 
-```shell
-conda create -n miles_release python=3.11
-conda activate miles_release
-```
+    conda create -n miles_option_b python=3.10
+    conda activate miles_option_b
+    source <CANN_PATH>/ascend-toolkit/set_env.sh
 
-### Working Directory Setup
+Install the exact framework packages from the package source approved for the
+target host. The torch-npu distribution version is distinct from its 26.0.0
+product release:
 
-```shell
-mkdir <WORKSPACE> && cd <WORKSPACE>
-```
+    pip install torch==2.7.1 torchvision==0.22.1
+    pip install torch-npu==2.7.1.post4
+    pip install transformers==5.6.0 huggingface-hub==1.23.0
 
-### CANN Environment
+Verify installed metadata and reject any resolver change to these versions.
 
-Prior to start work with miles on Ascend you need to install CANN Toolkit, Kernels operator package and NNAL version 8.5.0, check the [installation guide](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/83RC1/softwareinst/instg/instg_0008.html?Mode=PmIns\&InstallType=local\&OS=openEuler\&Software=cannToolKit)
+## Source Installation
 
-```shell
-source <CANN_PATH>/ascend-toolkit/set_env.sh
-source <CANN_PATH>/nnal/atb/set_env.sh
-```
+Prepare immutable source checkouts:
 
-The Miles NPU launcher forwards CANN and ATB variables from this caller environment into the Ray runtime.
-It does not invent machine-specific installation paths, so source the environment scripts before launching
-Miles or provide the equivalent `ASCEND_*` and `ATB_*` variables explicitly.
+    mkdir <WORKSPACE> && cd <WORKSPACE>
 
-### PyTorch and PyTorch NPU
+    git clone https://github.com/NVIDIA/Megatron-LM.git
+    git -C Megatron-LM checkout --detach 963bf39218e8bb83a1203b40293358498322be50
 
-```shell
-pip install torch-npu==2.8.0
-```
+    git clone https://gitcode.com/ascend/TransformerEngineNPU.git
+    git -C TransformerEngineNPU checkout --detach cecf4a2a3ea7f31afb85cc6669f6b18adc56e5bd
 
-## Installing Dependencies
+    git clone https://gitcode.com/ascend/MegatronAdaptor.git
+    git -C MegatronAdaptor checkout --detach 56e18624ec632cf462c079c3873b8fbf2fbd3c77
 
-### SGLang
+    git clone https://github.com/radixark/Megatron-Bridge.git
+    git -C Megatron-Bridge checkout --detach 07d61e1547a8356cc34928f7eb20226d2f9db3fa
 
-```shell
-cd <WORKSPACE>
-git clone https://github.com/sgl-project/sglang.git && cd sglang
-git checkout sglang-miles
-mv python/pyproject.toml python/pyproject.toml.backup
-mv python/pyproject_other.toml python/pyproject.toml
-pip install -e "python[srt_npu]"
-pip install torch-npu==2.8.0
-```
+    git clone https://github.com/radixark/miles.git
+    git -C miles checkout --detach 551d15914c89b1229b76fe806ca5f5aa5a826309
+    cp -r miles/docker/npu_patch .
 
-### SGL Kernel NPU and Torch Memory Saver
+Install in dependency order without replacing the pinned framework packages:
 
-Download `Source code(zip)` from the release link, then install:
+    pip install -e <WORKSPACE>/Megatron-LM --no-deps
+    pip install -e <WORKSPACE>/TransformerEngineNPU --no-deps
+    pip install -e <WORKSPACE>/MegatronAdaptor --no-deps
+    pip install -e <WORKSPACE>/Megatron-Bridge --no-deps
+    pip install -e <WORKSPACE>/miles --no-deps
 
-```shell
-bash bulid.sh
-bash build.sh -a memory-saver
-pip install output/sgl_kernel_npu*.whl
-pip install output/torch_memory_saver*.whl
-```
-
-### Megatron-Bridge
-
-```shell
-pip install git+https://github.com/ISEEKYAN/mbridge.git@89eb10887887bc74853f89a4de258c0702932a1c --no-deps
-
-cd <WORKSPACE>
-git clone https://github.com/radixark/Megatron-Bridge.git -b bridge && \
-  cd Megatron-Bridge/ && git checkout 07d61e1547a8356cc34928f7eb20226d2f9db3fa && \
-  pip install -e . --no-deps
-pip install 'nvidia-modelopt[torch]>=0.37.0' --no-build-isolation
-```
-
-### Megatron-LM
-
-```shell
-cd <WORKSPACE>
-git clone https://github.com/radixark/Megatron-LM.git --recursive && \
-  cd Megatron-LM/ && git checkout 4716f75475c78e2fc2c6f0d3af095f1681b770b4 && \
-  pip install -e .
-```
-
-### MindSpeed
-
-```shell
-cd <WORKSPACE>
-git clone https://gitcode.com/Ascend/MindSpeed.git && \
-  cd MindSpeed/ && git checkout fc63de5c48426dd019c3b3f39e65f5bdf56e4086 && \
-  pip install -e .
-```
-
-### Miles
-
-```shell
-cd <WORKSPACE>
-git clone https://github.com/radixark/miles.git && \
-  cd miles && git checkout 551d15914c89b1229b76fe806ca5f5aa5a826309
-cp -r docker/npu_patch ../npu_patch
-pip install -e .
-```
+MindSpeed is not part of this foundation. Do not install it alongside
+MegatronAdaptor and do not restore the removed MindSpeed patch or aliases.
 
 ## Applying Patches
 
-```shell
-cd <WORKSPACE>/miles
-git apply ../npu_patch/miles.patch
+    git -C <WORKSPACE>/miles apply <WORKSPACE>/npu_patch/miles.patch
+    git -C <WORKSPACE>/Megatron-LM apply <WORKSPACE>/npu_patch/megatron.patch
+    git -C <WORKSPACE>/Megatron-Bridge apply <WORKSPACE>/npu_patch/megatron_bridge.patch
 
-cd <WORKSPACE>/sglang
-git apply ../npu_patch/sglang.patch
+The Miles patch imports megatron_adaptor once at the earliest Megatron
+bootstrap. There is no supported repatch(args) replacement. The Mcore patch
+contains only the NPU tensor-type compatibility gap and its focused test. The
+Bridge patch retains the standard Mcore TE class mappings and adapts Mcore
+0.17's replicated uneven-DTensor gather back to the plain full tensor expected
+by Bridge export.
 
-cd <WORKSPACE>/Megatron-LM
-git apply ../npu_patch/megatron.patch
+## Focused Patch Tests
 
-cd <WORKSPACE>/Megatron-Bridge
-git apply ../npu_patch/megatron_bridge.patch
+    cd <WORKSPACE>/miles
+    MCORE_SOURCE=<WORKSPACE>/Megatron-LM \
+      python -m pytest -q -o addopts='' tests/test_npu_patch_megatron_adaptor.py
+    python -m pytest -q -o addopts='' tests/test_npu_patch_runtime_env.py
 
-cd <WORKSPACE>/MindSpeed
-git apply ../npu_patch/mindspeed.patch
-```
+    cd <WORKSPACE>/Megatron-LM
+    python -m pytest -q -o addopts='' \
+      tests/unit_tests/transformer/test_npu_float16_module_types.py
 
-## Additional Dependencies
+    cd <WORKSPACE>/Megatron-Bridge
+    MCORE_SOURCE=<WORKSPACE>/Megatron-LM \
+    PYTHONPATH=<WORKSPACE>/Megatron-Bridge/src:<WORKSPACE>/Megatron-LM \
+      python -m pytest -q -o addopts='' \
+      --confcutdir=tests/unit_tests/models \
+      tests/unit_tests/models/test_option_b_mcore_compat.py
 
-```shell
-cd <WORKSPACE>/miles
-pip install triton-ascend
-pip install torch-npu==2.8.0
-pip install torchvision==0.23.0
-pip install numpy==1.26.0
-```
+The focused tests are patch-replay checks, not a substitute for a
+dependency-complete import, NPU operation, reduced training, or Miles
+weight-synchronization gate.
+
+## Capability Boundaries
+
+- FlashInfer is not patched. Mcore already marks it unavailable when import
+  fails, and no Option B runtime evidence demonstrated an incompatible import
+  that requires a source override.
+- Paged Stashing is unsupported on Mcore 0.17. Bridge detects its absence and
+  disables the optional path; this bundle does not backport it.
+- SGLang, SGL Kernel NPU, Ray, rollout assets, and sglang.patch remain in the
+  full RL rollout gate. Their presence in the repository does not make the
+  training foundation or the full rollout release complete.
