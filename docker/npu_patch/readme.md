@@ -97,13 +97,20 @@ Verify the immutable framework packages after every install command:
 
 ## Source Installation
 
-The patch bundle is a separately delivered, versioned artifact; it is not part
-of the pinned Miles source commit. Extract that artifact, point
-`PATCH_BUNDLE_DIR` at its `npu_patch` directory, and verify every patch by
-content digest before using it. Do not copy a patch directory from a Miles
-checkout or fetch a mutable branch:
+The patch bundle is published separately from the pinned Miles source commit.
+Acquire it from the exact reviewed commit below, assert that the checkout is
+detached at that commit, and verify every patch by content digest. Do not copy
+a patch directory from the Miles source checkout or select a mutable branch:
 
-    export PATCH_BUNDLE_DIR=<EXTRACTED_TASK_4_BUNDLE>/npu_patch
+    PATCH_BUNDLE_REPOSITORY=https://github.com/zhshgmail/miles.git
+    PATCH_BUNDLE_COMMIT=1cf501b7452383b4afece456f1ab3a23ea8a5718
+    PATCH_BUNDLE_CHECKOUT="$PWD/miles-option-b-patch-bundle-$PATCH_BUNDLE_COMMIT"
+    test ! -e "$PATCH_BUNDLE_CHECKOUT"
+    git clone --no-checkout "$PATCH_BUNDLE_REPOSITORY" "$PATCH_BUNDLE_CHECKOUT"
+    git -C "$PATCH_BUNDLE_CHECKOUT" checkout --detach 1cf501b7452383b4afece456f1ab3a23ea8a5718
+    test "$(git -C "$PATCH_BUNDLE_CHECKOUT" rev-parse HEAD)" = "$PATCH_BUNDLE_COMMIT"
+    ! git -C "$PATCH_BUNDLE_CHECKOUT" symbolic-ref -q HEAD
+    export PATCH_BUNDLE_DIR="$PATCH_BUNDLE_CHECKOUT/docker/npu_patch"
     test -f "$PATCH_BUNDLE_DIR/readme.md"
     (
       cd "$PATCH_BUNDLE_DIR"
