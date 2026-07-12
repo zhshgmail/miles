@@ -32,14 +32,15 @@ index e3b0acaf4..fff135fdf 100644
                  megatron_weights = task.param_weight
 diff --git a/tests/unit_tests/models/test_option_b_mcore_compat.py b/tests/unit_tests/models/test_option_b_mcore_compat.py
 new file mode 100644
-index 000000000..dde1c541c
+index 000000000..feba0e0a4
 --- /dev/null
 +++ b/tests/unit_tests/models/test_option_b_mcore_compat.py
-@@ -0,0 +1,239 @@
+@@ -0,0 +1,279 @@
 +import importlib
 +import importlib.util
 +import os
 +from pathlib import Path
++import subprocess
 +import sys
 +import tomllib
 +from types import ModuleType
@@ -275,3 +276,42 @@ index 000000000..dde1c541c
 +    assert Version("3.12") in mcore_python
 +    assert Version("3.12") in bridge_python
 +    assert Version("3.13") not in bridge_python
++
++
++def test_normal_megatron_bridge_imports_in_clean_process():
++    env = os.environ.copy()
++    env["PYTHONPATH"] = os.pathsep.join((str(ROOT / "src"), str(MCORE_SOURCE)))
++    te_npu_source = Path(env["TE_NPU_SOURCE"]).resolve()
++    probe_source = f"""
++import triton
++
++# Import-only smoke tests have no active Triton device driver. The target NPU
++# environment supplies one; bypass autotune construction without bypassing any
++# megatron.bridge package initializers.
++triton.autotune = lambda *args, **kwargs: (lambda fn: fn)
++
++from importlib.metadata import version
++from pathlib import Path
++
++from packaging.specifiers import SpecifierSet
++from packaging.version import Version
++
++import megatron.bridge
++from megatron.bridge import AutoBridge
++from megatron.bridge.training.config import DistributedDataParallelConfig
++import transformer_engine
++
++assert version("nvidia-modelopt") == "0.43.0"
++assert version("omegaconf") == "2.3.0"
++assert Version(version("datasets")) in SpecifierSet(">=2.20,<5")
++assert Path(transformer_engine.__file__).resolve().is_relative_to(Path({str(te_npu_source)!r}))
++"""
++    probe = subprocess.run(
++        [sys.executable, "-c", probe_source],
++        env=env,
++        capture_output=True,
++        text=True,
++        timeout=60,
++    )
++
++    assert probe.returncode == 0, f"stdout:\n{probe.stdout}\nstderr:\n{probe.stderr}"

@@ -19,6 +19,9 @@ training-patch replay.
 | TransformerEngineNPU | cecf4a2a3ea7f31afb85cc6669f6b18adc56e5bd | [Ascend TransformerEngineNPU](https://gitcode.com/ascend/TransformerEngineNPU) |
 | Megatron-Bridge | 07d61e1547a8356cc34928f7eb20226d2f9db3fa | [radixark Megatron-Bridge](https://github.com/radixark/Megatron-Bridge) |
 | Miles | 551d15914c89b1229b76fe806ca5f5aa5a826309 | [radixark Miles](https://github.com/radixark/miles) |
+| NVIDIA ModelOpt | 0.43.0 | [NVIDIA ModelOpt](https://github.com/NVIDIA/TensorRT-Model-Optimizer) |
+| OmegaConf | 2.3.0 | [OmegaConf](https://github.com/omry/omegaconf) |
+| datasets | >=2.20,<5 | [Hugging Face datasets](https://github.com/huggingface/datasets) |
 | transformers | 5.6.0 | [Hugging Face transformers](https://github.com/huggingface/transformers) |
 | huggingface-hub | 1.23.0 | [Hugging Face Hub](https://github.com/huggingface/huggingface_hub) |
 
@@ -44,6 +47,10 @@ distinct from its 26.0.0 product release:
     torchvision==0.22.1
     transformers==5.6.0
     huggingface-hub==1.23.0
+    nvidia-modelopt==0.43.0
+    omegaconf==2.3.0
+    datasets>=2.20,<5
+    requests>=2.32,<3
     triton-ascend>=3.2,<3.3
     EOF
 
@@ -100,7 +107,7 @@ Prepare immutable source checkouts:
     cp -r miles/docker/npu_patch .
 
 Install in dependency order without build isolation or dependency resolution;
-the complete build/test imports were installed in the constrained base step:
+the build/test imports were installed in the constrained base step:
 
     python -m pip install -e <WORKSPACE>/Megatron-LM --no-build-isolation --no-deps
     python -m pip install -e <WORKSPACE>/TransformerEngineNPU --no-build-isolation --no-deps
@@ -108,9 +115,43 @@ the complete build/test imports were installed in the constrained base step:
     python -m pip install -e <WORKSPACE>/Megatron-Bridge --no-build-isolation --no-deps
     python -m pip install -e <WORKSPACE>/miles --no-build-isolation --no-deps
 
-Run the imports exercised by the focused patch tests before applying patches:
+Install the runtime dependencies reached by normal Bridge package import and
+the Option B training/weight-conversion configuration paths. This is done after
+the editable source builds because ModelOpt requires setuptools >=80, while the
+pinned source build metadata requires setuptools <80:
+
+    python -m pip install -c /tmp/miles-option-b-constraints.txt \
+      nvidia-modelopt==0.43.0 omegaconf==2.3.0 \
+      'datasets>=2.20,<5' 'requests>=2.32,<3'
+
+Verify that dependency resolution did not replace the framework stack:
 
     python - <<'PY'
+    from importlib.metadata import version
+    from packaging.specifiers import SpecifierSet
+    from packaging.version import Version
+
+    exact = {
+        "torch": "2.7.1",
+        "torch-npu": "2.7.1.post4",
+        "torchvision": "0.22.1",
+        "transformers": "5.6.0",
+        "huggingface-hub": "1.23.0",
+        "nvidia-modelopt": "0.43.0",
+        "omegaconf": "2.3.0",
+    }
+    for distribution, required in exact.items():
+        installed = version(distribution)
+        assert installed == required, (distribution, installed, required)
+    assert Version(version("datasets")) in SpecifierSet(">=2.20,<5")
+    PY
+
+Run the imports exercised by the focused patch tests before applying patches.
+The Transformer Engine path check rejects an NVIDIA Transformer Engine wheel:
+
+    python - <<'PY'
+    from pathlib import Path
+
     import einops
     import numpy
     import packaging
@@ -124,6 +165,9 @@ Run the imports exercised by the focused patch tests before applying patches:
     import transformer_engine.pytorch
     import megatron_adaptor
     import megatron.core
+
+    te_source = Path("<WORKSPACE>/TransformerEngineNPU").resolve()
+    assert Path(transformer_engine.__file__).resolve().is_relative_to(te_source)
     PY
 
 MindSpeed is not part of this foundation. Do not install it alongside
@@ -156,6 +200,7 @@ the plain full tensor expected by Bridge export.
 
     cd <WORKSPACE>/Megatron-Bridge
     MCORE_SOURCE=<WORKSPACE>/Megatron-LM \
+    TE_NPU_SOURCE=<WORKSPACE>/TransformerEngineNPU \
     PYTHONPATH=<WORKSPACE>/Megatron-Bridge/src:<WORKSPACE>/Megatron-LM \
       python -m pytest -q -o addopts='' \
       --confcutdir=tests/unit_tests/models \
