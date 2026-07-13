@@ -103,11 +103,11 @@ detached at that commit, and verify every patch by content digest. Do not copy
 a patch directory from the Miles source checkout or select a mutable branch:
 
     PATCH_BUNDLE_REPOSITORY=https://github.com/zhshgmail/miles.git
-    PATCH_BUNDLE_COMMIT=1cf501b7452383b4afece456f1ab3a23ea8a5718
+    PATCH_BUNDLE_COMMIT=e53a7c0c32fd6a5ff2cd89afa952950ae7360f4e
     PATCH_BUNDLE_CHECKOUT="$PWD/miles-option-b-patch-bundle-$PATCH_BUNDLE_COMMIT"
     test ! -e "$PATCH_BUNDLE_CHECKOUT"
     git clone --no-checkout "$PATCH_BUNDLE_REPOSITORY" "$PATCH_BUNDLE_CHECKOUT"
-    git -C "$PATCH_BUNDLE_CHECKOUT" checkout --detach 1cf501b7452383b4afece456f1ab3a23ea8a5718
+    git -C "$PATCH_BUNDLE_CHECKOUT" checkout --detach e53a7c0c32fd6a5ff2cd89afa952950ae7360f4e
     test "$(git -C "$PATCH_BUNDLE_CHECKOUT" rev-parse HEAD)" = "$PATCH_BUNDLE_COMMIT"
     ! git -C "$PATCH_BUNDLE_CHECKOUT" symbolic-ref -q HEAD
     export PATCH_BUNDLE_DIR="$PATCH_BUNDLE_CHECKOUT/docker/npu_patch"
@@ -115,7 +115,7 @@ a patch directory from the Miles source checkout or select a mutable branch:
     (
       cd "$PATCH_BUNDLE_DIR"
       sha256sum --check <<'EOF'
-    b61941df50a3767a98c62b42040fa2eca01c68192a5d8884c52985258516fc8f  miles.patch
+    1627f54fe2bcb9846dcb3dd4fa1d60a09ae96c01951aa35cfd0aadac6d1e0a6b  miles.patch
     36f027c5e1ec3dc1d05f3fe3fdd32d15df203e45063b20736955ea1d30faab22  megatron.patch
     801a7d07b43249fe76a9dbfb961565138088fb03e0efb9b237225534bfc02162  megatron_bridge.patch
     d014bba43071c2190d113706a0ca789d567eb3d8b26a123bd71a7866bc0e84f3  sglang.patch
@@ -296,6 +296,9 @@ weight-synchronization qualification.
   that requires a source override.
 - Paged Stashing is unsupported on Mcore 0.17. Bridge detects its absence and
   disables the optional path; this bundle does not backport it.
-- SGLang, SGL Kernel NPU, Ray, rollout assets, and sglang.patch remain in the
-  full RL rollout gate. Their presence in the repository does not make the
-  training foundation or the full rollout release complete.
+- SGLang, SGL Kernel NPU, Ray, and rollout assets remain in the full RL rollout
+  gate. The repository's `sglang.patch` is a rejected historical artifact: its
+  final hunk has invalid line counts and its contexts no longer identify one
+  immutable SGLang source tree. Do not apply it. A rollout release requires a
+  newly pinned SGLang/SGL Kernel NPU pair and a patch regenerated from that
+  exact source generation.
