@@ -1,5 +1,5 @@
 diff --git a/miles/backends/experimental/fsdp_utils/update_weight_utils.py b/miles/backends/experimental/fsdp_utils/update_weight_utils.py
-index 98000e7d3..94fb71da5 100644
+index 98000e7d348c2f94f3c149ac0bd64ec0303b7be1..94fb71da52a044be5ccf46a49f90181692697e08 100644
 --- a/miles/backends/experimental/fsdp_utils/update_weight_utils.py
 +++ b/miles/backends/experimental/fsdp_utils/update_weight_utils.py
 @@ -234,12 +234,12 @@ class UpdateWeightFromDistributed(UpdateWeight):
@@ -18,18 +18,18 @@ index 98000e7d3..94fb71da5 100644
                  world_size=world_size,
                  rank=0,
 diff --git a/miles/backends/megatron_utils/__init__.py b/miles/backends/megatron_utils/__init__.py
-index 879b689c8..230e50630 100644
+index 879b689c855e11b034b0c0c0265e4269e5d874b7..230e506300f38cbbee0603dca9764b31174cac00 100644
 --- a/miles/backends/megatron_utils/__init__.py
 +++ b/miles/backends/megatron_utils/__init__.py
 @@ -1,5 +1,6 @@
  import logging
-
+ 
 +import megatron_adaptor
  import torch
-
+ 
  try:
 diff --git a/miles/backends/megatron_utils/actor.py b/miles/backends/megatron_utils/actor.py
-index 54ca4b81a..a1f6f7334 100644
+index 54ca4b81a5d054839651d01e7a5cd9656737ce32..a1f6f733467905ebd9735335b61b8d1d4f8d4b2e 100644
 --- a/miles/backends/megatron_utils/actor.py
 +++ b/miles/backends/megatron_utils/actor.py
 @@ -39,7 +39,7 @@ from .parallel import verify_megatron_parallel_state
@@ -39,15 +39,15 @@ index 54ca4b81a..a1f6f7334 100644
 -from .update_weight.update_weight_from_distributed.p2p import UpdateWeightP2P
 +# from .update_weight.update_weight_from_distributed.p2p import UpdateWeightP2P
  from .update_weight.update_weight_from_tensor import UpdateWeightFromTensor
-
+ 
  logging.getLogger("megatron").setLevel(logging.WARNING)
 @@ -58,7 +58,6 @@ class MegatronTrainRayActor(TrainRayActor):
          monkey_patch_torch_dist()
-
+ 
          super().init(args, role, with_ref)
 -
          init(args)
-
+ 
          if args.dumper_enable:
 @@ -598,7 +597,7 @@ class MegatronTrainRayActor(TrainRayActor):
          group_name = "actor_critic"
@@ -59,35 +59,35 @@ index 54ca4b81a..a1f6f7334 100644
              world_size=world_size,
              rank=0 if self.role == "actor" else 1,
 diff --git a/miles/backends/megatron_utils/arguments.py b/miles/backends/megatron_utils/arguments.py
-index f5ece6d88..82eaaac65 100644
+index f5ece6d882a2f11cf5496665fe24c648f51188bc..82eaaac65992388ec6ca79fdc109c5b75dcab1fe 100644
 --- a/miles/backends/megatron_utils/arguments.py
 +++ b/miles/backends/megatron_utils/arguments.py
 @@ -2,7 +2,7 @@ import logging
  import os
-
+ 
  from megatron.training.arguments import parse_args, validate_args
 -from megatron.training.tokenizer.tokenizer import _vocab_size_with_padding
 +from megatron.core.tokenizers.utils.build_tokenizer import vocab_size_with_padding
-
+ 
  __all__ = ["validate_args", "parse_args", "set_default_megatron_args"]
-
+ 
 @@ -26,7 +26,7 @@ def set_default_megatron_args(args):
          args.rope_type = "yarn" if args.multi_latent_attention else "rope"
-
+ 
      if args.vocab_size and not args.padded_vocab_size:
 -        args.padded_vocab_size = _vocab_size_with_padding(args.vocab_size, args)
 +        args.padded_vocab_size = vocab_size_with_padding(args.vocab_size, args)
-
+ 
      if not args.tokenizer_model and not args.tokenizer_type:
          logger.info("--tokenizer-model not set, use --hf-checkpoint as tokenizer model.")
 diff --git a/miles/backends/megatron_utils/model.py b/miles/backends/megatron_utils/model.py
-index 5d2503dab..667051e14 100644
+index 5d2503dab17aff3458179f4b206d7ac5a88fcb1b..667051e14a1edaf62be180c0aea413ae49f1a53d 100644
 --- a/miles/backends/megatron_utils/model.py
 +++ b/miles/backends/megatron_utils/model.py
 @@ -143,6 +143,11 @@ def setup_model_and_optimizer(
      config = OptimizerConfig(**kwargs)
      config.timers = None
-
+ 
 +    for model_item in model:
 +        for name, param in model_item.named_parameters():
 +            if not param.is_leaf:
@@ -97,23 +97,23 @@ index 5d2503dab..667051e14 100644
          config=config,
          model_chunks=model,
 diff --git a/miles/backends/megatron_utils/model_provider.py b/miles/backends/megatron_utils/model_provider.py
-index 45adc8679..e9672b49b 100644
+index 45adc86792f12a669fc93af6d3a0940e16ccb6a8..e9672b49b49bdd78561b22a388ffbe44fb071c30 100644
 --- a/miles/backends/megatron_utils/model_provider.py
 +++ b/miles/backends/megatron_utils/model_provider.py
 @@ -17,7 +17,6 @@ from megatron.core.transformer.spec_utils import import_module
  from megatron.core.transformer.transformer_config import TransformerConfig
  from megatron.training.arguments import core_transformer_config_from_args
-
+ 
 -from miles.utils.misc import load_function
  from miles.utils.replay_base import routing_replay_manager
-
+ 
  logger = logging.getLogger(__name__)
 @@ -61,6 +60,7 @@ def get_model_provider_func(
  ):
      # Support custom model provider path (similar to --custom-rm-path for reward models)
      if getattr(args, "custom_model_provider_path", None):
 +        from miles.utils.misc import load_function
-
+ 
          def wrapped_model_provider(
              pre_process: bool = True,
 @@ -110,6 +110,20 @@ def get_model_provider_func(
@@ -135,25 +135,25 @@ index 45adc8679..e9672b49b 100644
 +                continue
 +            setattr(provider, key, value)
          provider.finalize()
-
+ 
          def wrapped_bridge_provider(
 diff --git a/miles/backends/megatron_utils/update_weight/common.py b/miles/backends/megatron_utils/update_weight/common.py
-index 677f93c62..79ee57664 100644
+index 677f93c6273b5f86ec3e6792deab051d7857869c..79ee57664c3bd26b22720ebc176936cc9b51bcf0 100644
 --- a/miles/backends/megatron_utils/update_weight/common.py
 +++ b/miles/backends/megatron_utils/update_weight/common.py
 @@ -154,8 +154,8 @@ def named_params_and_buffers(
  def _maybe_get_cpu_backup(x: torch.Tensor):
      from torch_memory_saver import torch_memory_saver
-
+ 
 -    if (cpu_tensor := torch_memory_saver.get_cpu_backup(x)) is not None:
 -        return cpu_tensor
 +    # if (cpu_tensor := torch_memory_saver.get_cpu_backup(x)) is not None:
 +    #     return cpu_tensor
-
+ 
      return x
-
+ 
 diff --git a/miles/backends/megatron_utils/update_weight/update_weight_from_distributed/broadcast.py b/miles/backends/megatron_utils/update_weight/update_weight_from_distributed/broadcast.py
-index 51afedac4..c31c04a46 100644
+index 51afedac4e15cb5b5d71b71a7fb37780758f22fe..c31c04a46b7ed6b7f075dd4bc1c945e02a9ecc91 100644
 --- a/miles/backends/megatron_utils/update_weight/update_weight_from_distributed/broadcast.py
 +++ b/miles/backends/megatron_utils/update_weight/update_weight_from_distributed/broadcast.py
 @@ -129,12 +129,12 @@ def connect_rollout_engines_from_distributed(
@@ -172,18 +172,18 @@ index 51afedac4..c31c04a46 100644
          world_size=world_size,
          rank=0,
 diff --git a/miles/ray/actor_group.py b/miles/ray/actor_group.py
-index 669988b52..723113a69 100644
+index 669988b52c3817aa13a8d18094de6b5b61016170..723113a690de723c2545063ebd7fd54535da1ad9 100644
 --- a/miles/ray/actor_group.py
 +++ b/miles/ray/actor_group.py
 @@ -85,7 +85,9 @@ class RayTrainGroup:
-
+ 
              actor_impl = FSDPTrainRayActor
-
+ 
 -        TrainRayActor = ray.remote(num_gpus=1, runtime_env={"env_vars": env_vars})(actor_impl)
 +        # TrainRayActor = ray.remote(num_gpus=1, runtime_env={"env_vars": env_vars})(actor_impl)
 +        TrainRayActor = ray.remote(runtime_env={"env_vars": env_vars})(actor_impl)
 +        device_name = "NPU"
-
+ 
          # Create worker actors
          actor_handles = []
 @@ -93,11 +95,12 @@ class RayTrainGroup:
@@ -201,13 +201,13 @@ index 669988b52..723113a69 100644
              if rank == 0:
                  master_addr, master_port = ray.get(actor.get_master_addr_and_port.remote())
 diff --git a/miles/ray/placement_group.py b/miles/ray/placement_group.py
-index bf8244b90..12442d9d6 100644
+index bf8244b90abee4934335f04486e3789eafa09701..12442d9d6b5351148b6cbce9894e0da334281f37 100644
 --- a/miles/ray/placement_group.py
 +++ b/miles/ray/placement_group.py
 @@ -14,10 +14,12 @@ from .rollout import RolloutManager
  logger = logging.getLogger(__name__)
-
-
+ 
+ 
 -@ray.remote(num_gpus=1)
 +# @ray.remote(num_gpus=1)
 +@ray.remote
@@ -216,18 +216,18 @@ index bf8244b90..12442d9d6 100644
 -        return ray.util.get_node_ip_address(), ray.get_gpu_ids()[0]
 +        # return ray.util.get_node_ip_address(), ray.get_gpu_ids()[0]
 +        return ray.util.get_node_ip_address(), ray.get_runtime_context().get_accelerator_ids()["NPU"][0]
-
-
+ 
+ 
  def sort_key(x):
 @@ -38,12 +40,15 @@ def sort_key(x):
              # representation that allows for sorting.
              node_ip_parts = [ord(c) for c in node_identifier]
-
+ 
 -    return (node_ip_parts, gpu_id)
 +    # return (node_ip_parts, gpu_id)
 +    return (node_ip_parts, int(gpu_id))
-
-
+ 
+ 
  def _create_placement_group(num_gpus):
      """Create a placement group with the specified number of GPUs."""
 -    bundles = [{"GPU": 1, "CPU": 1} for _ in range(num_gpus)]
@@ -236,7 +236,7 @@ index bf8244b90..12442d9d6 100644
 +    bundles = [{device_name: 1, "CPU": 1} for _ in range(num_gpus)]
      pg = placement_group(bundles, strategy="PACK")
      num_bundles = len(bundles)
-
+ 
 @@ -56,7 +61,8 @@ def _create_placement_group(num_gpus):
                  scheduling_strategy=PlacementGroupSchedulingStrategy(
                      placement_group=pg,
@@ -248,18 +248,18 @@ index bf8244b90..12442d9d6 100644
          )
      gpu_ids = ray.get([actor.get_ip_and_gpu_id.remote() for actor in info_actors])
 @@ -174,8 +180,9 @@ async def create_training_models(args, pgs, rollout_manager):
-
-
+ 
+ 
  def create_rollout_manager(args, pg):
 +    device_name = "NPU"
      rollout_manager = RolloutManager.options(
 -        num_cpus=1, num_gpus=0, **(compute_ray_pin_head_options() if args.pin_rollout_manager_to_head else {})
 +        num_cpus=1, resources={device_name: 0}, **(compute_ray_pin_head_options() if args.pin_rollout_manager_to_head else {})
      ).remote(args, pg)
-
+ 
      # calculate num_rollout from num_epoch
 diff --git a/miles/ray/rollout.py b/miles/ray/rollout.py
-index ded71b511..89f515c9d 100644
+index ded71b511ea185826372c5e9b1d28cc5ad5db98d..89f515c9d85280b8485681047c2b51e8336cdb67 100644
 --- a/miles/ray/rollout.py
 +++ b/miles/ray/rollout.py
 @@ -140,14 +140,15 @@ class ServerGroup:
@@ -289,14 +289,14 @@ index ded71b511..89f515c9d 100644
 +        device_name = "NPU"
 +        self.rollout_engine_lock = Lock.options(num_cpus=1, resources={device_name: 0}).remote()
          self.rollout_id = -1
-
+ 
          self._metric_checker = MetricChecker.maybe_create(args)
 diff --git a/miles/ray/train_actor.py b/miles/ray/train_actor.py
-index a4145ca27..33340323e 100644
+index a4145ca270d2da064cfe090de2dea9368552ad77..33340323eef14c3d866066cacd3d57e3cfaf2a9b 100644
 --- a/miles/ray/train_actor.py
 +++ b/miles/ray/train_actor.py
 @@ -20,10 +20,17 @@ logger = logging.getLogger(__name__)
-
+ 
  def get_local_gpu_id():
      cvd = os.environ.get("CUDA_VISIBLE_DEVICES", None)
 +    # if cvd is None:
@@ -312,21 +312,21 @@ index a4145ca27..33340323e 100644
      else:
 -        return cvd.split(",").index(str(ray.get_gpu_ids()[0]))
 +        return cvd.split(",").index(str(device_ids[0]))
-
-
+ 
+ 
  class TrainRayActor(RayActor):
 diff --git a/miles/utils/arguments.py b/miles/utils/arguments.py
-index abfa137ac..7c5fe007a 100644
+index abfa137ac9ad17b443dc14d4cb7ed71e8e1a2872..7c5fe007ae534dde344b0726d6bbca3896f8b75d 100644
 --- a/miles/utils/arguments.py
 +++ b/miles/utils/arguments.py
 @@ -119,7 +119,7 @@ def get_miles_extra_args_provider(add_custom_arguments=None):
                  ),
              )
-
+ 
 -            reset_arg(parser, "--distributed-backend", type=str, default="nccl")
 +            reset_arg(parser, "--distributed-backend", type=str, default="hccl")
              reset_arg(parser, "--distributed-timeout-minutes", type=int, default=10)
-
+ 
              return parser
 @@ -2252,7 +2252,7 @@ def hf_validate_args(args, hf_config):
          ("tie_word_embeddings", "untie_embeddings_and_output_weights", lambda x, y: not x == y),
@@ -338,37 +338,37 @@ index abfa137ac..7c5fe007a 100644
          ),
          ("rope_theta", "rotary_base", equal),
 diff --git a/miles/utils/debug_utils/run_megatron/worker/main.py b/miles/utils/debug_utils/run_megatron/worker/main.py
-index 359a51c1d..823967301 100644
+index 359a51c1d60fb3742434a8ea69cf01d297c40af6..8239673012e0fc569c4d8ed84b3126d334e76633 100644
 --- a/miles/utils/debug_utils/run_megatron/worker/main.py
 +++ b/miles/utils/debug_utils/run_megatron/worker/main.py
 @@ -15,6 +15,7 @@ from functools import partial
  from pathlib import Path
  from typing import Any
-
+ 
 +import megatron_adaptor
  import torch
  import torch.distributed as dist
  from megatron.core import mpu
 @@ -117,9 +118,9 @@ def _parse_args() -> tuple[argparse.Namespace, WorkerScriptArgs]:
-
-
+ 
+ 
  def _initialize_megatron(args: argparse.Namespace) -> None:
 -    torch.distributed.init_process_group(backend="nccl")
 +    torch.distributed.init_process_group(backend="hccl")
      local_rank: int = int(os.environ.get("LOCAL_RANK", 0))
 -    torch.cuda.set_device(local_rank)
 +    torch.npu.set_device(local_rank)
-
+ 
      args.hf_checkpoint = str(args.script_hf_checkpoint)
      args.__dict__.setdefault("megatron_to_hf_mode", "raw")
 diff --git a/miles/utils/external_utils/command_utils.py b/miles/utils/external_utils/command_utils.py
-index d016e01ac..1b5f95c93 100644
+index d016e01ac34bcc65ab708ebecafe6d20c1cb0ecf..ebb45258bbd5038d8c9549062e5649734ef8367d 100644
 --- a/miles/utils/external_utils/command_utils.py
 +++ b/miles/utils/external_utils/command_utils.py
 @@ -193,6 +193,122 @@ def execute_train(
          )
-
-
+ 
+ 
 +def execute_train_npu(
 +    train_args: str,
 +    num_gpus_per_node: int,
@@ -383,7 +383,7 @@ index d016e01ac..1b5f95c93 100644
 +        extra_env_vars = {}
 +    if config is None:
 +        config = ExecuteTrainConfig()
-+    external_ray = get_bool_env_var("SLIME_SCRIPT_EXTERNAL_RAY")
++    external_ray = get_bool_env_var("MILES_SCRIPT_EXTERNAL_RAY")
 +    master_addr = os.environ.get("MASTER_ADDR", "127.0.0.1")
 +
 +    train_backend_fsdp = "--train-backend fsdp" in train_args
@@ -468,7 +468,7 @@ index d016e01ac..1b5f95c93 100644
 +        }
 +    )
 +
-+    if get_bool_env_var("SLIME_SCRIPT_ENABLE_RAY_SUBMIT", "1"):
++    if get_bool_env_var("MILES_SCRIPT_ENABLE_RAY_SUBMIT", "1"):
 +        cmd_megatron_model_source = (
 +            f'source "{repo_base_dir}/scripts/models/{megatron_model_type}.sh" && '
 +            if megatron_model_type is not None
@@ -489,7 +489,7 @@ index d016e01ac..1b5f95c93 100644
      try:
          return json.loads(text)
 diff --git a/miles/utils/reloadable_process_group.py b/miles/utils/reloadable_process_group.py
-index af4878b4e..f796a4ee7 100644
+index af4878b4e7159c6b2a576df76f0a645f52eeabb5..f796a4ee747f7bd4a38e76149a164f438ed1fecd 100644
 --- a/miles/utils/reloadable_process_group.py
 +++ b/miles/utils/reloadable_process_group.py
 @@ -154,7 +154,7 @@ class ReloadableProcessGroup(torch.distributed.ProcessGroup):
@@ -499,10 +499,10 @@ index af4878b4e..f796a4ee7 100644
 -            group = old_new_group(ranks=reloadable_group.group_info["ranks"], backend="nccl")
 +            group = old_new_group(ranks=reloadable_group.group_info["ranks"], backend="hccl")
              reloadable_group.group = group
-
+ 
      def rank(self) -> int:
 diff --git a/miles/utils/tensor_backper.py b/miles/utils/tensor_backper.py
-index 2fc2a6359..6952d1fc1 100644
+index 2fc2a6359daac4dc44966d233ead13129961c7d5..6952d1fc104a549f201612acc0753cb5a54300ab 100644
 --- a/miles/utils/tensor_backper.py
 +++ b/miles/utils/tensor_backper.py
 @@ -110,6 +110,6 @@ def _compute_hash_tensor(x: torch.Tensor):
@@ -513,200 +513,443 @@ index 2fc2a6359..6952d1fc1 100644
 +    x = x.view(torch.int32)
      x = x.sum()
      return x.item()
-diff --git a/tests/test_npu_patch_megatron_adaptor.py b/tests/test_npu_patch_megatron_adaptor.py
+diff --git a/scripts/run_qwen3_4b_npu.py b/scripts/run_qwen3_4b_npu.py
 new file mode 100644
-index 000000000..384c60eee
+index 0000000000000000000000000000000000000000..70fd24a420b3c29456c27ce6c9449916a02b8e4b
 --- /dev/null
-+++ b/tests/test_npu_patch_megatron_adaptor.py
-@@ -0,0 +1,182 @@
-+import ast
++++ b/scripts/run_qwen3_4b_npu.py
+@@ -0,0 +1,184 @@
++"""Ascend NPU first-light launcher for Qwen3-4B."""
++
++from __future__ import annotations
++
++from collections.abc import Mapping
++from dataclasses import dataclass
 +import os
 +from pathlib import Path
-+import subprocess
++import shlex
++
++
++@dataclass(frozen=True)
++class LauncherConfig:
++    runtime_workspace: Path
++    train_backend: str
++    num_npus: int
++    tensor_parallel_size: int
++    model_dir: Path
++    data_dir: Path
++    model_name: str = "Qwen3-4B-Instruct-2507"
++
++    @property
++    def source_roots(self) -> tuple[str, ...]:
++        workspace = self.runtime_workspace
++        return tuple(
++            str(path)
++            for path in (
++                workspace / "miles",
++                workspace / "Megatron-Bridge" / "src",
++                workspace / "Megatron-LM",
++                workspace / "MegatronAdaptor",
++                workspace / "TransformerEngineNPU",
++                workspace / "mbridge",
++                workspace / "sglang" / "python",
++            )
++        )
++
++    @property
++    def model_path(self) -> Path:
++        return self.model_dir / self.model_name
++
++    @property
++    def prompt_data_path(self) -> Path:
++        return self.data_dir / "dapo-math-17k" / "dapo-math-17k.jsonl"
++
++    @classmethod
++    def from_env(cls, environ: Mapping[str, str] | None = None) -> LauncherConfig:
++        env = os.environ if environ is None else environ
++        workspace = env.get("MILES_RUNTIME_WORKSPACE", "")
++        backend = env.get("MILES_SCRIPT_TRAIN_BACKEND", "")
++        if not backend:
++            raise ValueError("MILES_SCRIPT_TRAIN_BACKEND is required")
++        if backend.lower() != "megatron":
++            raise ValueError("MILES_SCRIPT_TRAIN_BACKEND must be megatron")
++        workspace_path = _absolute_path(workspace, "MILES_RUNTIME_WORKSPACE")
++        num_npus = int(env.get("MILES_SCRIPT_NUM_GPUS", "2"))
++        tp_size = int(env.get("MILES_SCRIPT_TP_SIZE", str(num_npus)))
++        if num_npus < 1:
++            raise ValueError("MILES_SCRIPT_NUM_GPUS must be positive")
++        if tp_size != num_npus:
++            raise ValueError("MILES_SCRIPT_TP_SIZE must equal MILES_SCRIPT_NUM_GPUS")
++        model_dir = _absolute_path(env.get("MILES_MODEL_DIR", "/root/models"), "MILES_MODEL_DIR")
++        data_dir = _absolute_path(env.get("MILES_DATA_DIR", "/root/datasets"), "MILES_DATA_DIR")
++        return cls(
++            runtime_workspace=workspace_path,
++            train_backend="megatron",
++            num_npus=num_npus,
++            tensor_parallel_size=tp_size,
++            model_dir=model_dir,
++            data_dir=data_dir,
++        )
++
++
++def _absolute_path(raw: str, name: str) -> Path:
++    path = Path(raw)
++    if (
++        not path.is_absolute()
++        or os.path.normpath(raw) != raw
++        or str(path) != raw
++        or any(character.isspace() for character in raw)
++        or any(character in raw for character in "\0\r\n;&|`$<>\\'\"")
++    ):
++        raise ValueError(f"{name} must be an absolute normalized path without whitespace")
++    return path
++
++
++def build_train_args(config: LauncherConfig) -> str:
++    model = shlex.quote(str(config.model_path))
++    prompt_data = shlex.quote(str(config.prompt_data_path))
++    return " ".join(
++        (
++            f"--hf-checkpoint {model}",
++            f"--load {model}",
++            f"--prompt-data {prompt_data}",
++            "--input-key prompt",
++            "--label-key label",
++            "--apply-chat-template",
++            "--rollout-shuffle",
++            "--rm-type math",
++            "--num-rollout 1",
++            "--rollout-batch-size 2",
++            "--n-samples-per-prompt 2",
++            "--rollout-max-response-len 64",
++            "--rollout-temperature 1",
++            "--global-batch-size 2",
++            "--advantage-estimator grpo",
++            "--kl-loss-coef 0.00",
++            "--kl-loss-type low_var_kl",
++            "--kl-coef 0.00",
++            "--entropy-coef 0.00",
++            "--eps-clip 0.2",
++            "--eps-clip-high 0.28",
++            "--optimizer adam",
++            "--lr 1e-6",
++            "--lr-decay-style constant",
++            "--weight-decay 0.1",
++            "--adam-beta1 0.9",
++            "--adam-beta2 0.98",
++            "--rollout-num-gpus-per-engine 1",
++            "--sglang-mem-fraction-static 0.6",
++            "--sglang-device npu",
++            "--sglang-disable-radix-cache",
++            "--sglang-chunked-prefill-size 4096",
++            "--sglang-max-prefill-tokens 512",
++            "--train-backend megatron",
++            f"--tensor-model-parallel-size {config.tensor_parallel_size}",
++            "--sequence-parallel",
++            "--pipeline-model-parallel-size 1",
++            "--context-parallel-size 1",
++            "--expert-model-parallel-size 1",
++            "--expert-tensor-parallel-size 1",
++            "--recompute-granularity full",
++            "--recompute-method uniform",
++            "--recompute-num-layers 1",
++            "--attention-dropout 0.0",
++            "--hidden-dropout 0.0",
++            "--accumulate-allreduce-grads-in-fp32",
++            "--attention-softmax-in-fp32",
++            "--attention-backend flash",
++            "--megatron-to-hf-mode bridge",
++            "--actor-num-nodes 1",
++            f"--actor-num-gpus-per-node {config.num_npus}",
++            f"--rollout-num-gpus {config.num_npus}",
++            "--colocate",
++            "--check-weight-update-equal",
++            "--no-gradient-accumulation-fusion",
++            "--use-flash-attn",
++        )
++    )
++
++
++def prepare_assets(config: LauncherConfig, utils) -> None:
++    model_dir = shlex.quote(str(config.model_dir))
++    data_dir = shlex.quote(str(config.data_dir))
++    model_path = shlex.quote(str(config.model_path))
++    utils.exec_command(f"mkdir -p {model_dir} {data_dir}")
++    utils.exec_command(
++        f"hf download Qwen/{config.model_name} --local-dir {model_path}"
++    )
++    utils.hf_download_dataset("zhuzilin/dapo-math-17k", data_dir=str(config.data_dir))
++
++
++def run(config: LauncherConfig, *, utils, execute_train) -> None:
++    prepare_assets(config, utils)
++    execute_train(
++        train_args=build_train_args(config),
++        num_gpus_per_node=config.num_npus,
++        megatron_model_type="qwen3-4B-Instruct-2507",
++        extra_env_vars={
++            "PYTHONPATH": ":".join(config.source_roots),
++            "MODEL_ARGS_ROTARY_BASE": "5000000",
++        },
++        megatron_path=str(config.runtime_workspace / "Megatron-LM"),
++    )
++
++
++def main() -> None:
++    from miles.utils.external_utils import command_utils as utils
++
++    run(LauncherConfig.from_env(), utils=utils, execute_train=utils.execute_train_npu)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/scripts/run_qwen3_4b_npu.sh b/scripts/run_qwen3_4b_npu.sh
+new file mode 100755
+index 0000000000000000000000000000000000000000..c5bfc6e92e830069577cfc1f5ce754d39c135e35
+--- /dev/null
++++ b/scripts/run_qwen3_4b_npu.sh
+@@ -0,0 +1,9 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++: "${MILES_RUNTIME_WORKSPACE:?MILES_RUNTIME_WORKSPACE must name the attested source workspace}"
++: "${MILES_SCRIPT_TRAIN_BACKEND:?MILES_SCRIPT_TRAIN_BACKEND must be set to megatron}"
++
++export PYTHONPATH="${MILES_RUNTIME_WORKSPACE}/miles:${MILES_RUNTIME_WORKSPACE}/Megatron-Bridge/src:${MILES_RUNTIME_WORKSPACE}/Megatron-LM:${MILES_RUNTIME_WORKSPACE}/MegatronAdaptor:${MILES_RUNTIME_WORKSPACE}/TransformerEngineNPU:${MILES_RUNTIME_WORKSPACE}/mbridge:${MILES_RUNTIME_WORKSPACE}/sglang/python"
++
++exec python3 "${MILES_RUNTIME_WORKSPACE}/miles/scripts/run_qwen3_4b_npu.py"
+diff --git a/tests/test_npu_patch_qwen3_launcher.py b/tests/test_npu_patch_qwen3_launcher.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..1983758f5643315fb177dd362ca846d0c3c17c6a
+--- /dev/null
++++ b/tests/test_npu_patch_qwen3_launcher.py
+@@ -0,0 +1,220 @@
++from pathlib import Path
++import runpy
 +import sys
++from types import ModuleType
 +
 +import pytest
-+import torch
 +
 +
 +ROOT = Path(__file__).resolve().parents[1]
-+BOOTSTRAP = ROOT / "miles" / "backends" / "megatron_utils" / "__init__.py"
-+DIRECT_MEGATRON_ENTRYPOINTS = (
-+    ROOT / "tools" / "convert_hf_to_torch_dist.py",
-+    ROOT / "tools" / "convert_to_hf.py",
-+    ROOT / "miles" / "utils" / "debug_utils" / "run_megatron" / "worker" / "main.py",
-+)
-+MEGATRON_ENTRY_PATHS = (BOOTSTRAP, *DIRECT_MEGATRON_ENTRYPOINTS)
 +
 +
-+def _imported_modules(node):
-+    if isinstance(node, ast.Import):
-+        return tuple(alias.name for alias in node.names)
-+    if isinstance(node, ast.ImportFrom):
-+        return (node.module or "",)
-+    return ()
++def _launcher_namespace():
++    return runpy.run_path(str(ROOT / "scripts" / "run_qwen3_4b_npu.py"))
 +
 +
-+def test_each_megatron_process_entry_imports_adaptor_before_mcore():
-+    for path in MEGATRON_ENTRY_PATHS:
-+        source = path.read_text(encoding="utf-8")
-+        imports = sorted(
-+            (node for node in ast.walk(ast.parse(source)) if isinstance(node, (ast.Import, ast.ImportFrom))),
-+            key=lambda node: node.lineno,
-+        )
-+        adaptor = [node for node in imports if "megatron_adaptor" in _imported_modules(node)]
-+        mcore = [
-+            node
-+            for node in imports
-+            if any(name == "megatron" or name.startswith("megatron.") for name in _imported_modules(node))
-+        ]
-+
-+        assert len(adaptor) == 1, path
-+        assert mcore, path
-+        assert adaptor[0].lineno < mcore[0].lineno, path
-+        assert "mindspeed" not in source.lower()
-+        assert "repatch" not in source
++def test_npu_patch_supplies_qwen3_launcher_entrypoints():
++    assert (ROOT / "scripts" / "run_qwen3_4b_npu.py").is_file()
++    assert (ROOT / "scripts" / "run_qwen3_4b_npu.sh").is_file()
 +
 +
-+def _require_live_npu():
-+    try:
-+        import torch_npu  # noqa: F401
-+
-+        available = torch.npu.is_available() and torch.npu.device_count() > 0
-+    except (ImportError, RuntimeError):
-+        available = False
-+    if available:
-+        return
-+    message = "requires the Option-B Python 3.12 live NPU runtime"
-+    if os.environ.get("OPTION_B_REQUIRE_LIVE_NPU") == "1":
-+        pytest.fail(message)
-+    pytest.skip(message)
-+
-+
-+def test_direct_entries_bind_jit_after_exact_adaptor_patch():
-+    mcore_source = Path(os.environ["MCORE_SOURCE"]).resolve()
-+    adaptor_source = Path(os.environ["MEGATRON_ADAPTOR_SOURCE"]).resolve()
-+    adaptor_commit = subprocess.check_output(
-+        ["git", "-C", str(adaptor_source), "rev-parse", "HEAD"], text=True
-+    ).strip()
-+    assert adaptor_commit == "56e18624ec632cf462c079c3873b8fbf2fbd3c77"
-+    assert sys.version_info[:2] == (3, 12)
-+    env = os.environ.copy()
-+    env["PYTHONPATH"] = os.pathsep.join((str(ROOT), str(adaptor_source), str(mcore_source)))
-+    probe_source = f"""
-+import ast
-+from pathlib import Path
-+import sys
-+
-+path = Path(sys.argv[1])
-+tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-+imports = [node for node in tree.body if isinstance(node, (ast.Import, ast.ImportFrom))]
-+
-+def names(node):
-+    if isinstance(node, ast.Import):
-+        return tuple(alias.name for alias in node.names)
-+    return (node.module or "",)
-+
-+adaptor = next(node for node in imports if "megatron_adaptor" in names(node))
-+mcore = next(
-+    node
-+    for node in imports
-+    if any(name == "megatron" or name.startswith("megatron.") for name in names(node))
-+)
-+exec(compile(ast.Module(body=[adaptor, mcore], type_ignores=[]), str(path), "exec"), {{}})
-+import megatron_adaptor
-+import torch
-+from megatron.core.jit import jit_fuser
-+assert Path(megatron_adaptor.__file__).resolve().is_relative_to(Path({str(adaptor_source)!r}))
-+assert jit_fuser is torch.compile
-+assert jit_fuser is torch.jit.script
-+assert jit_fuser.__module__ == "megatron_adaptor.patches.requirements.requirements"
-+assert jit_fuser.__name__ == "dummy_compile"
-+"""
-+
-+    for path in DIRECT_MEGATRON_ENTRYPOINTS:
-+        probe = subprocess.run(
-+            [sys.executable, "-c", probe_source, str(path)],
-+            env=env,
-+            capture_output=True,
-+            text=True,
-+            timeout=30,
-+        )
-+        assert probe.returncode == 0, f"{path}\nstdout:\n{probe.stdout}\nstderr:\n{probe.stderr}"
-+
-+
-+def test_ppo_compile_decorators_remain_active():
-+    path = ROOT / "miles" / "utils" / "ppo_utils.py"
-+    source = path.read_text(encoding="utf-8")
-+    tree = ast.parse(source)
-+    decorators = [
-+        decorator
-+        for node in ast.walk(tree)
-+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-+        for decorator in node.decorator_list
-+        if isinstance(decorator, ast.Call)
-+        and isinstance(decorator.func, ast.Attribute)
-+        and isinstance(decorator.func.value, ast.Name)
-+        and decorator.func.value.id == "torch"
-+        and decorator.func.attr == "compile"
-+    ]
-+
-+    assert len(decorators) == 3
-+    assert "# @torch.compile" not in source
-+
-+
-+def test_convert_hf_to_torch_dist_imports_with_pinned_mbridge():
-+    _require_live_npu()
-+    mcore_source = Path(os.environ["MCORE_SOURCE"]).resolve()
-+    bridge_source = Path(os.environ["BRIDGE_SOURCE"]).resolve()
-+    mbridge_source = Path(os.environ["MBRIDGE_SOURCE"]).resolve()
-+    te_npu_source = Path(os.environ["TE_NPU_SOURCE"]).resolve()
-+    adaptor_source = Path(os.environ["MEGATRON_ADAPTOR_SOURCE"]).resolve()
-+    mbridge_commit = subprocess.check_output(
-+        ["git", "-C", str(mbridge_source), "rev-parse", "HEAD"], text=True
-+    ).strip()
-+    assert mbridge_commit == "89eb10887887bc74853f89a4de258c0702932a1c"
-+    env = os.environ.copy()
-+    env["PYTHONPATH"] = os.pathsep.join(
-+        (
-+            str(ROOT),
-+            str(adaptor_source),
-+            str(te_npu_source),
-+            str(bridge_source / "src"),
-+            str(mcore_source),
-+        )
++def test_main_uses_command_utils_for_asset_preparation_and_npu_execution(monkeypatch):
++    namespace = _launcher_namespace()
++    config_type = namespace["LauncherConfig"]
++    config = config_type.from_env(
++        {
++            "MILES_RUNTIME_WORKSPACE": "/workspace/autoport/miles-runtime",
++            "MILES_SCRIPT_TRAIN_BACKEND": "megatron",
++        }
 +    )
-+    probe_source = f"""
-+from importlib.metadata import version
-+from pathlib import Path
++    events = []
++    fake_utils = ModuleType("miles.utils.external_utils.command_utils")
++    fake_utils.exec_command = lambda command: events.append(("command", command))
++    fake_utils.hf_download_dataset = lambda dataset, data_dir: events.append(
++        ("dataset", dataset, data_dir)
++    )
++    fake_utils.execute_train_npu = lambda **kwargs: events.append(("launch", kwargs))
 +
-+import torch
-+import torch_npu
-+import tools.convert_hf_to_torch_dist
-+import mbridge
-+import transformer_engine
++    import miles.utils.external_utils as external_utils
 +
-+assert torch.npu.is_available() and torch.npu.device_count() > 0
-+assert version("mbridge") == "0.15.1"
-+assert version("triton-ascend") == "3.2.1"
-+assert Path(mbridge.__file__).resolve().is_relative_to(Path({str(mbridge_source)!r}))
-+assert Path(transformer_engine.__file__).resolve().is_relative_to(Path({str(te_npu_source)!r}))
-+"""
-+    probe = subprocess.run(
-+        [sys.executable, "-c", probe_source],
-+        env=env,
-+        capture_output=True,
-+        text=True,
-+        timeout=60,
++    monkeypatch.setattr(external_utils, "command_utils", fake_utils, raising=False)
++    monkeypatch.setitem(sys.modules, "miles.utils.external_utils.command_utils", fake_utils)
++    monkeypatch.setattr(config_type, "from_env", classmethod(lambda cls: config))
++
++    namespace["main"]()
++
++    assert [event[0] for event in events] == ["command", "command", "dataset", "launch"]
++    assert events[-1][1]["extra_env_vars"]["PYTHONPATH"] == ":".join(config.source_roots)
++
++
++def test_shell_dispatches_the_npu_launcher_from_the_proven_runtime_workspace():
++    text = (ROOT / "scripts" / "run_qwen3_4b_npu.sh").read_text(encoding="utf-8")
++    workspace = "/workspace/autoport/miles-runtime"
++    config = _launcher_namespace()["LauncherConfig"].from_env(
++        {
++            "MILES_RUNTIME_WORKSPACE": workspace,
++            "MILES_SCRIPT_TRAIN_BACKEND": "megatron",
++        }
 +    )
 +
-+    assert probe.returncode == 0, f"stdout:\n{probe.stdout}\nstderr:\n{probe.stderr}"
++    assert 'MILES_RUNTIME_WORKSPACE' in text
++    assert '"${MILES_RUNTIME_WORKSPACE}/miles/scripts/run_qwen3_4b_npu.py"' in text
++    assert "run_qwen3_4b.py" not in text
++    assert "${PYTHONPATH" not in text
++    pythonpath_line = next(line for line in text.splitlines() if line.startswith("export PYTHONPATH="))
++    shell_pythonpath = pythonpath_line.removeprefix('export PYTHONPATH="').removesuffix('"')
++    shell_roots = tuple(shell_pythonpath.replace("${MILES_RUNTIME_WORKSPACE}", workspace).split(":"))
++    assert shell_roots == config.source_roots
++    assert len(shell_roots) == len(set(shell_roots)) == 7
++
++
++def test_launcher_requires_canonical_megatron_backend_and_ignores_legacy_prefix():
++    config_type = _launcher_namespace()["LauncherConfig"]
++    env = {
++        "MILES_RUNTIME_WORKSPACE": "/workspace/autoport/miles-runtime",
++        "SLIME_SCRIPT_TRAIN_BACKEND": "megatron",
++    }
++
++    with pytest.raises(ValueError, match="MILES_SCRIPT_TRAIN_BACKEND"):
++        config_type.from_env(env)
++
++    env["MILES_SCRIPT_TRAIN_BACKEND"] = "fsdp"
++    with pytest.raises(ValueError, match="must be megatron"):
++        config_type.from_env(env)
++
++
++def test_launcher_derives_two_npu_topology_and_all_source_roots_from_one_workspace():
++    config_type = _launcher_namespace()["LauncherConfig"]
++    config = config_type.from_env(
++        {
++            "MILES_RUNTIME_WORKSPACE": "/workspace/autoport/miles-runtime",
++            "MILES_SCRIPT_TRAIN_BACKEND": "megatron",
++        }
++    )
++
++    assert config.num_npus == 2
++    assert config.tensor_parallel_size == 2
++    assert config.source_roots == (
++        "/workspace/autoport/miles-runtime/miles",
++        "/workspace/autoport/miles-runtime/Megatron-Bridge/src",
++        "/workspace/autoport/miles-runtime/Megatron-LM",
++        "/workspace/autoport/miles-runtime/MegatronAdaptor",
++        "/workspace/autoport/miles-runtime/TransformerEngineNPU",
++        "/workspace/autoport/miles-runtime/mbridge",
++        "/workspace/autoport/miles-runtime/sglang/python",
++    )
++    assert all(not root.startswith("/root/") for root in config.source_roots)
++    assert all("sgl-kernel" not in root for root in config.source_roots)
++
++
++def test_launcher_rejects_relative_workspace_and_topology_drift():
++    config_type = _launcher_namespace()["LauncherConfig"]
++    base = {
++        "MILES_RUNTIME_WORKSPACE": "relative/workspace",
++        "MILES_SCRIPT_TRAIN_BACKEND": "megatron",
++    }
++    with pytest.raises(ValueError, match="absolute normalized"):
++        config_type.from_env(base)
++
++    base["MILES_RUNTIME_WORKSPACE"] = "/workspace/../unattested"
++    with pytest.raises(ValueError, match="absolute normalized"):
++        config_type.from_env(base)
++
++    base["MILES_RUNTIME_WORKSPACE"] = "/workspace/autoport/miles-runtime"
++    base["MILES_SCRIPT_NUM_GPUS"] = "2"
++    base["MILES_SCRIPT_TP_SIZE"] = "1"
++    with pytest.raises(ValueError, match="must equal"):
++        config_type.from_env(base)
++
++
++def test_launcher_rejects_shell_metacharacters_in_asset_paths():
++    config_type = _launcher_namespace()["LauncherConfig"]
++    base = {
++        "MILES_RUNTIME_WORKSPACE": "/workspace/autoport/miles-runtime",
++        "MILES_SCRIPT_TRAIN_BACKEND": "megatron",
++    }
++
++    for field in ("MILES_MODEL_DIR", "MILES_DATA_DIR"):
++        env = dict(base)
++        env[field] = "/assets/owned;touch-pwned"
++        with pytest.raises(ValueError, match="absolute normalized"):
++            config_type.from_env(env)
++
++
++def test_launcher_uses_one_model_and_dataset_contract_for_prepare_and_execute():
++    namespace = _launcher_namespace()
++    config = namespace["LauncherConfig"].from_env(
++        {
++            "MILES_RUNTIME_WORKSPACE": "/workspace/autoport/miles-runtime",
++            "MILES_SCRIPT_TRAIN_BACKEND": "megatron",
++            "MILES_MODEL_DIR": "/assets/models",
++            "MILES_DATA_DIR": "/assets/datasets",
++        }
++    )
++    args = namespace["build_train_args"](config)
++
++    assert config.model_path == Path("/assets/models/Qwen3-4B-Instruct-2507")
++    assert config.prompt_data_path == Path("/assets/datasets/dapo-math-17k/dapo-math-17k.jsonl")
++    assert f"--hf-checkpoint {config.model_path}" in args
++    assert f"--load {config.model_path}" in args
++    assert f"--prompt-data {config.prompt_data_path}" in args
++    assert "/root/model/" not in args
++    assert "geo3k" not in args
++
++
++def test_first_light_args_enable_real_compare_and_two_npu_colocation():
++    namespace = _launcher_namespace()
++    config = namespace["LauncherConfig"].from_env(
++        {
++            "MILES_RUNTIME_WORKSPACE": "/workspace/autoport/miles-runtime",
++            "MILES_SCRIPT_TRAIN_BACKEND": "megatron",
++        }
++    )
++    args = namespace["build_train_args"](config)
++
++    assert "--check-weight-update-equal" in args
++    assert "--colocate" in args
++    assert "--actor-num-gpus-per-node 2" in args
++    assert "--rollout-num-gpus 2" in args
++    assert "--tensor-model-parallel-size 2" in args
++    assert "--megatron-to-hf-mode bridge" in args
++    assert "--num-rollout 1" in args
++    assert "--train-backend fsdp" not in args
++
++
++def test_run_prepares_matching_assets_before_launching_with_full_worker_pythonpath():
++    namespace = _launcher_namespace()
++    config = namespace["LauncherConfig"].from_env(
++        {
++            "MILES_RUNTIME_WORKSPACE": "/workspace/autoport/miles-runtime",
++            "MILES_SCRIPT_TRAIN_BACKEND": "megatron",
++            "MILES_MODEL_DIR": "/assets/models",
++            "MILES_DATA_DIR": "/assets/datasets",
++        }
++    )
++    events = []
++
++    class FakeUtils:
++        @staticmethod
++        def exec_command(command):
++            events.append(("command", command))
++
++        @staticmethod
++        def hf_download_dataset(dataset, data_dir):
++            events.append(("dataset", dataset, data_dir))
++
++    def fake_execute_train_npu(**kwargs):
++        events.append(("launch", kwargs))
++
++    namespace["run"](config, utils=FakeUtils, execute_train=fake_execute_train_npu)
++
++    assert events[0] == ("command", "mkdir -p /assets/models /assets/datasets")
++    assert events[1] == (
++        "command",
++        "hf download Qwen/Qwen3-4B-Instruct-2507 --local-dir /assets/models/Qwen3-4B-Instruct-2507",
++    )
++    assert events[2] == ("dataset", "zhuzilin/dapo-math-17k", "/assets/datasets")
++    launch = events[3][1]
++    assert launch["megatron_path"] == "/workspace/autoport/miles-runtime/Megatron-LM"
++    assert launch["extra_env_vars"]["PYTHONPATH"] == ":".join(config.source_roots)
++    assert f"--prompt-data {config.prompt_data_path}" in launch["train_args"]
 diff --git a/tests/test_npu_patch_runtime_env.py b/tests/test_npu_patch_runtime_env.py
 new file mode 100644
-index 000000000..b8c3c8594
+index 0000000000000000000000000000000000000000..713260be258a2d5b55d4190ea2e35d1ec8087e09
 --- /dev/null
 +++ b/tests/test_npu_patch_runtime_env.py
-@@ -0,0 +1,50 @@
+@@ -0,0 +1,60 @@
 +import json
 +import re
 +import sys
@@ -728,10 +971,16 @@ index 000000000..b8c3c8594
 +
 +def test_execute_train_npu_forwards_runtime_prefixes_and_megatron_path(monkeypatch):
 +    commands = []
++    bool_env_names = []
++
++    def get_bool_env_var(name, default="false"):
++        bool_env_names.append(name)
++        return name == "MILES_SCRIPT_ENABLE_RAY_SUBMIT"
++
 +    monkeypatch.setattr(
 +        command_utils,
 +        "get_bool_env_var",
-+        lambda name, default="false": name == "SLIME_SCRIPT_ENABLE_RAY_SUBMIT",
++        get_bool_env_var,
 +    )
 +    monkeypatch.setattr(
 +        command_utils,
@@ -757,14 +1006,18 @@ index 000000000..b8c3c8594
 +    assert env["ASCEND_CUSTOM_OPP_PATH"] == "/opt/ascend/custom"
 +    assert env["ATB_CUSTOM_PATH"] == "/opt/atb/custom"
 +    assert env["PYTHONPATH"] == "/workspace/Megatron-LM:/opt/existing/python"
++    assert bool_env_names == [
++        "MILES_SCRIPT_EXTERNAL_RAY",
++        "MILES_SCRIPT_ENABLE_RAY_SUBMIT",
++    ]
 diff --git a/tools/convert_hf_to_torch_dist.py b/tools/convert_hf_to_torch_dist.py
-index 250af0b68..c8e3593ba 100644
+index 250af0b683e9a8ee9bf24336937633cc280656cd..c8e3593bab7e39fc2e7123f43b4ea4425e6d41a9 100644
 --- a/tools/convert_hf_to_torch_dist.py
 +++ b/tools/convert_hf_to_torch_dist.py
 @@ -2,6 +2,7 @@ import gc
  import os
  import shutil
-
+ 
 +import megatron_adaptor
  import torch
  import torch.distributed as dist
@@ -772,7 +1025,7 @@ index 250af0b68..c8e3593ba 100644
 @@ -94,17 +95,17 @@ def main():
      local_rank = int(os.getenv("LOCAL_RANK") or os.getenv("SLURM_LOCALID") or 0)
      global_rank = int(os.getenv("RANK") or os.getenv("SLURM_PROCID") or 0)
-
+ 
 -    torch.cuda.set_device(local_rank)
 +    torch.npu.set_device(local_rank)
      os.environ.setdefault("WORLD_SIZE", str(world_size))
@@ -792,18 +1045,18 @@ index 250af0b68..c8e3593ba 100644
      init(args)
 @@ -122,9 +123,9 @@ def main():
      print(f"Model loaded: {hf_model_path}")
-
+ 
      print_memory("after loading model")
 -    torch.cuda.synchronize()
 +    torch.npu.synchronize()
      gc.collect()
 -    torch.cuda.empty_cache()
 +    torch.npu.empty_cache()
-
+ 
      save_checkpoint(1, model, None, None, 0)
-
+ 
 diff --git a/tools/convert_to_hf.py b/tools/convert_to_hf.py
-index a38347304..a81ed4848 100644
+index a3834730469ac0a8f6fe947d2582a76b85a93101..a81ed4848c53a0db350ea59ffb3b783bb12a681e 100644
 --- a/tools/convert_to_hf.py
 +++ b/tools/convert_to_hf.py
 @@ -1,3 +1,4 @@
