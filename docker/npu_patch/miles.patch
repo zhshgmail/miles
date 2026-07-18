@@ -742,15 +742,6 @@ index abfa137ac..6a8fa666d 100644
 
      return args
 
-@@ -2252,7 +2309,7 @@ def hf_validate_args(args, hf_config):
-         ("tie_word_embeddings", "untie_embeddings_and_output_weights", lambda x, y: not x == y),
-         (
-             "rms_norm_eps",
--            "norm_epsilon" if os.getenv("DEPRECATED_MEGATRON_COMPATIBLE", "0") == "1" else "layernorm_epsilon",
-+            "norm_epsilon" if os.getenv("DEPRECATED_MEGATRON_COMPATIBLE", "0") == "1" else "norm_epsilon",
-             equal,
-         ),
-         ("rope_theta", "rotary_base", equal),
 diff --git a/miles/utils/chat_template_utils/template.py b/miles/utils/chat_template_utils/template.py
 index a44cd3392..cc699ee72 100644
 --- a/miles/utils/chat_template_utils/template.py

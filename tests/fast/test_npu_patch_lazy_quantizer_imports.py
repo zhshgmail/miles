@@ -8,6 +8,7 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+PATCH_BASE_COMMIT = "551d1591"
 PATCH_COMMIT = "af69c6af205a4ae845ff4f71ecc16716c171b84f"
 PATCH_SHA256 = "259b7b4187eb0d4492dbfe570190b7358041a1e0f171ee832752fa66dc76b4ee"
 PROCESSORS = "miles/backends/megatron_utils/megatron_to_hf/processors"
@@ -106,6 +107,40 @@ def test_non_colocate_actor_does_not_import_tensor_updater_at_module_scope():
     assert f"-{import_line}" in actor_diff
     assert f"+{import_line}" not in actor_diff
     assert f"+            {import_line}" in actor_diff
+
+
+def test_non_deprecated_megatron_uses_layernorm_epsilon_namespace(tmp_path):
+    relative_path = "miles/utils/arguments.py"
+    source = tmp_path / "source"
+    destination = source / relative_path
+    destination.parent.mkdir(parents=True)
+    baseline = subprocess.run(
+        ["git", "show", f"{PATCH_BASE_COMMIT}:{relative_path}"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+    ).stdout
+    destination.write_bytes(baseline)
+    subprocess.run(
+        [
+            "git",
+            "apply",
+            "--whitespace=error-all",
+            "--include",
+            relative_path,
+            str(ROOT / "docker" / "npu_patch" / "miles.patch"),
+        ],
+        cwd=source,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    patched_source = destination.read_text(encoding="utf-8")
+    assert (
+        '"norm_epsilon" if os.getenv("DEPRECATED_MEGATRON_COMPATIBLE", "0") == "1" '
+        'else "layernorm_epsilon"'
+    ) in patched_source
 
 
 def test_unquantized_path_does_not_import_sglang_or_quantizer_implementations(patched_tree):
