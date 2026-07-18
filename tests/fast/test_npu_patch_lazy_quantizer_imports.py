@@ -8,8 +8,8 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-PATCH_COMMIT = "b91b1a9f162c5bff8161f0f527c31c57d9d5317a"
-PATCH_SHA256 = "80c613966015e8598e49090e8623222b9a3eb6c55474a3ba38c06debc9394ce0"
+PATCH_COMMIT = "af69c6af205a4ae845ff4f71ecc16716c171b84f"
+PATCH_SHA256 = "259b7b4187eb0d4492dbfe570190b7358041a1e0f171ee832752fa66dc76b4ee"
 PROCESSORS = "miles/backends/megatron_utils/megatron_to_hf/processors"
 ACTOR = "miles/backends/megatron_utils/actor.py"
 
