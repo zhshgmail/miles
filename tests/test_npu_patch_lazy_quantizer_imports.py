@@ -1,15 +1,17 @@
 import io
-from pathlib import Path
 import subprocess
 import sys
 import tarfile
 import textwrap
+from pathlib import Path
 
 import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
 MILES_BASE = "551d15914c89b1229b76fe806ca5f5aa5a826309"
+PATCH_COMMIT = "1e7764421cf964e388f1d835210a4af037313448"
+PATCH_SHA256 = "350fb1bad15ab3ae6a941477dffafca4d9e1db2b3f834462ac6ed63a2dd3c23d"
 PROCESSORS = "miles/backends/megatron_utils/megatron_to_hf/processors"
 
 
@@ -86,6 +88,14 @@ sys.modules[processors_name] = processors
         text=True,
         check=False,
     )
+
+
+def test_readme_pins_the_reviewed_patch_commit_and_digest():
+    text = (ROOT / "docker" / "npu_patch" / "readme.md").read_text(encoding="utf-8")
+
+    assert f"PATCH_BUNDLE_COMMIT={PATCH_COMMIT}" in text
+    assert f"checkout --detach {PATCH_COMMIT}" in text
+    assert f"{PATCH_SHA256}  miles.patch" in text
 
 
 def test_unquantized_path_does_not_import_sglang_or_quantizer_implementations(patched_tree):
