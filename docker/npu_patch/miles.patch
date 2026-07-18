@@ -80,6 +80,44 @@ index f5ece6d88..82eaaac65 100644
 
      if not args.tokenizer_model and not args.tokenizer_type:
          logger.info("--tokenizer-model not set, use --hf-checkpoint as tokenizer model.")
+diff --git a/miles/backends/megatron_utils/megatron_to_hf/processors/__init__.py b/miles/backends/megatron_utils/megatron_to_hf/processors/__init__.py
+--- a/miles/backends/megatron_utils/megatron_to_hf/processors/__init__.py
++++ b/miles/backends/megatron_utils/megatron_to_hf/processors/__init__.py
+@@ -1,6 +1,3 @@
+ from .padding_remover import remove_padding
+-from .quantizer_compressed_tensors import quantize_params_compressed_tensors
+-from .quantizer_fp8 import quantize_params_fp8
+-from .quantizer_mxfp8 import quantize_params_mxfp8
+-
++
+ __all__ = [
+@@ -12,6 +9,24 @@ __all__ = [
+ ]
+-
+-
++
++
++def quantize_params_fp8(*args, **kwargs):
++    from .quantizer_fp8 import quantize_params_fp8 as implementation
++
++    return implementation(*args, **kwargs)
++
++
++def quantize_params_mxfp8(*args, **kwargs):
++    from .quantizer_mxfp8 import quantize_params_mxfp8 as implementation
++
++    return implementation(*args, **kwargs)
++
++
++def quantize_params_compressed_tensors(*args, **kwargs):
++    from .quantizer_compressed_tensors import quantize_params_compressed_tensors as implementation
++
++    return implementation(*args, **kwargs)
++
++
+ def quantize_params(args, megatron_name, converted_named_params, quantization_config):
+     if quantization_config is None:
+         return converted_named_params
 diff --git a/miles/backends/megatron_utils/model.py b/miles/backends/megatron_utils/model.py
 index 5d2503dab..667051e14 100644
 --- a/miles/backends/megatron_utils/model.py
