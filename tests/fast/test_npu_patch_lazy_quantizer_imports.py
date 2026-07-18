@@ -1,15 +1,13 @@
-import io
+import shutil
 import subprocess
 import sys
-import tarfile
 import textwrap
 from pathlib import Path
 
 import pytest
 
 
-ROOT = Path(__file__).resolve().parents[1]
-MILES_BASE = "551d15914c89b1229b76fe806ca5f5aa5a826309"
+ROOT = Path(__file__).resolve().parents[2]
 PATCH_COMMIT = "1e7764421cf964e388f1d835210a4af037313448"
 PATCH_SHA256 = "350fb1bad15ab3ae6a941477dffafca4d9e1db2b3f834462ac6ed63a2dd3c23d"
 PROCESSORS = "miles/backends/megatron_utils/megatron_to_hf/processors"
@@ -18,20 +16,16 @@ PROCESSORS = "miles/backends/megatron_utils/megatron_to_hf/processors"
 @pytest.fixture(scope="module")
 def patched_tree(tmp_path_factory):
     source = tmp_path_factory.mktemp("miles-lazy-quantizers") / "source"
-    source.mkdir()
-    archive = subprocess.run(
-        ["git", "archive", "--format=tar", MILES_BASE],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-    ).stdout
-    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as handle:
-        handle.extractall(source, filter="data")
+    processors = source / PROCESSORS
+    processors.mkdir(parents=True)
+    shutil.copyfile(ROOT / PROCESSORS / "__init__.py", processors / "__init__.py")
     subprocess.run(
         [
             "git",
             "apply",
             "--whitespace=error-all",
+            "--include",
+            f"{PROCESSORS}/__init__.py",
             str(ROOT / "docker" / "npu_patch" / "miles.patch"),
         ],
         cwd=source,
@@ -46,6 +40,7 @@ def _run_probe(source: Path, body: str) -> subprocess.CompletedProcess[str]:
     script = f"""
 import importlib.abc
 import importlib.util
+import inspect
 from pathlib import Path
 import sys
 from types import ModuleType
@@ -183,6 +178,16 @@ from miles.backends.megatron_utils.megatron_to_hf.processors import (
     quantize_params_mxfp8,
 )
 
+assert str(inspect.signature(quantize_params_fp8)) == (
+    "(args, megatron_name, converted_named_params, quantization_config)"
+)
+assert str(inspect.signature(quantize_params_mxfp8)) == (
+    "(args, megatron_name, converted_named_params, quantization_config)"
+)
+assert str(inspect.signature(quantize_params_compressed_tensors)) == (
+    "(converted_named_params, quantization_config)"
+)
+
 events = []
 
 def install(name, function_name, marker):
@@ -201,11 +206,11 @@ install(
     "compressed-tensors",
 )
 
-assert quantize_params_fp8("fp8-arg", flag=True) == "fp8"
-assert quantize_params_mxfp8("mxfp8-arg") == "mxfp8"
-assert quantize_params_compressed_tensors("compressed-arg") == "compressed-tensors"
+assert quantize_params_fp8("args", "name", "params", "config") == "fp8"
+assert quantize_params_mxfp8("args", "name", "params", "config") == "mxfp8"
+assert quantize_params_compressed_tensors("params", "config") == "compressed-tensors"
 assert [event[0] for event in events] == ["fp8", "mxfp8", "compressed-tensors"]
-assert events[0][1:] == (("fp8-arg",), {"flag": True})
+assert events[0][1:] == (("args", "name", "params", "config"), {})
 """,
     )
 
