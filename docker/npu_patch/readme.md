@@ -103,11 +103,11 @@ detached at that commit, and verify every patch by content digest. Do not copy
 a patch directory from the Miles source checkout or select a mutable branch:
 
     PATCH_BUNDLE_REPOSITORY=https://github.com/zhshgmail/miles.git
-    PATCH_BUNDLE_COMMIT=06da400eea771d096990544e1cd3fe7ef59c5378
+    PATCH_BUNDLE_COMMIT=32fb1b5626ac611bc5504feb50923d230df68e93
     PATCH_BUNDLE_CHECKOUT="$PWD/miles-option-b-patch-bundle-$PATCH_BUNDLE_COMMIT"
     test ! -e "$PATCH_BUNDLE_CHECKOUT"
     git clone --no-checkout "$PATCH_BUNDLE_REPOSITORY" "$PATCH_BUNDLE_CHECKOUT"
-    git -C "$PATCH_BUNDLE_CHECKOUT" checkout --detach 06da400eea771d096990544e1cd3fe7ef59c5378
+    git -C "$PATCH_BUNDLE_CHECKOUT" checkout --detach 32fb1b5626ac611bc5504feb50923d230df68e93
     test "$(git -C "$PATCH_BUNDLE_CHECKOUT" rev-parse HEAD)" = "$PATCH_BUNDLE_COMMIT"
     ! git -C "$PATCH_BUNDLE_CHECKOUT" symbolic-ref -q HEAD
     export PATCH_BUNDLE_DIR="$PATCH_BUNDLE_CHECKOUT/docker/npu_patch"
@@ -115,7 +115,7 @@ a patch directory from the Miles source checkout or select a mutable branch:
     (
       cd "$PATCH_BUNDLE_DIR"
       sha256sum --check <<'EOF'
-    ec40bd750f02b7bbce050bedbd85a88bbe3fa31e205e0185be36d2d0fc314f81  miles.patch
+    ba7bcc2214da0aaad9d4cac975a79c0070700c22d77bdd121038eee3d5f870e6  miles.patch
     36f027c5e1ec3dc1d05f3fe3fdd32d15df203e45063b20736955ea1d30faab22  megatron.patch
     801a7d07b43249fe76a9dbfb961565138088fb03e0efb9b237225534bfc02162  megatron_bridge.patch
     d014bba43071c2190d113706a0ca789d567eb3d8b26a123bd71a7866bc0e84f3  sglang.patch
