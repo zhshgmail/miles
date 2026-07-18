@@ -29,27 +29,37 @@ index 879b689c8..230e50630 100644
 
  try:
 diff --git a/miles/backends/megatron_utils/actor.py b/miles/backends/megatron_utils/actor.py
-index 54ca4b81a..a1f6f7334 100644
+index 54ca4b81a..e9cccce7b 100644
 --- a/miles/backends/megatron_utils/actor.py
 +++ b/miles/backends/megatron_utils/actor.py
-@@ -39,7 +39,7 @@ from .parallel import verify_megatron_parallel_state
+@@ -39,8 +39,7 @@ from .parallel import verify_megatron_parallel_state
  from .replay_utils import get_register_replay_list_func
  from .update_weight.common import named_params_and_buffers
  from .update_weight.update_weight_from_distributed.broadcast import UpdateWeightFromDistributed
 -from .update_weight.update_weight_from_distributed.p2p import UpdateWeightP2P
+-from .update_weight.update_weight_from_tensor import UpdateWeightFromTensor
 +# from .update_weight.update_weight_from_distributed.p2p import UpdateWeightP2P
- from .update_weight.update_weight_from_tensor import UpdateWeightFromTensor
-
+ 
  logging.getLogger("megatron").setLevel(logging.WARNING)
-@@ -58,7 +58,6 @@ class MegatronTrainRayActor(TrainRayActor):
+ 
+@@ -58,7 +57,6 @@ class MegatronTrainRayActor(TrainRayActor):
          monkey_patch_torch_dist()
-
+ 
          super().init(args, role, with_ref)
 -
          init(args)
-
+ 
          if args.dumper_enable:
-@@ -598,7 +597,7 @@ class MegatronTrainRayActor(TrainRayActor):
+@@ -159,6 +157,8 @@ class MegatronTrainRayActor(TrainRayActor):
+             self.args.vocab_size = self.tokenizer.vocab_size
+ 
+         if self.args.colocate:
++            from .update_weight.update_weight_from_tensor import UpdateWeightFromTensor
++
+             update_weight_cls = UpdateWeightFromTensor
+         else:
+             if self.args.update_weight_transfer_mode == "broadcast":
+@@ -598,7 +598,7 @@ class MegatronTrainRayActor(TrainRayActor):
          group_name = "actor_critic"
          world_size = 2
          self._actor_critic_groups = init_process_group(

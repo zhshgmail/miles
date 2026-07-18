@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 PATCH_COMMIT = "b91b1a9f162c5bff8161f0f527c31c57d9d5317a"
 PATCH_SHA256 = "80c613966015e8598e49090e8623222b9a3eb6c55474a3ba38c06debc9394ce0"
 PROCESSORS = "miles/backends/megatron_utils/megatron_to_hf/processors"
+ACTOR = "miles/backends/megatron_utils/actor.py"
 
 
 @pytest.fixture(scope="module")
@@ -91,6 +92,20 @@ def test_readme_pins_the_reviewed_patch_commit_and_digest():
     assert f"PATCH_BUNDLE_COMMIT={PATCH_COMMIT}" in text
     assert f"checkout --detach {PATCH_COMMIT}" in text
     assert f"{PATCH_SHA256}  miles.patch" in text
+
+
+def test_non_colocate_actor_does_not_import_tensor_updater_at_module_scope():
+    patch_text = (ROOT / "docker" / "npu_patch" / "miles.patch").read_text(encoding="utf-8")
+    actor_diff = patch_text.split(f"diff --git a/{ACTOR} b/{ACTOR}\n", 1)[1].split(
+        "\ndiff --git ", 1
+    )[0]
+
+    import_line = (
+        "from .update_weight.update_weight_from_tensor import UpdateWeightFromTensor"
+    )
+    assert f"-{import_line}" in actor_diff
+    assert f"+{import_line}" not in actor_diff
+    assert f"+            {import_line}" in actor_diff
 
 
 def test_unquantized_path_does_not_import_sglang_or_quantizer_implementations(patched_tree):
