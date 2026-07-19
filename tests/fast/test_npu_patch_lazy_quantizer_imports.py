@@ -9,8 +9,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 PATCH_BASE_COMMIT = "551d1591"
-PATCH_COMMIT = "2087947db422000461ddc984d00fcb0d9d2da414"
-PATCH_SHA256 = "86d64a76c21a35ea72cae1a389623e9cfa4da36db010b5d22384ca5e1db57dc8"
+PATCH_COMMIT = "a040a89dc36da2b9fcd6e05c989e9675a508005a"
+PATCH_SHA256 = "0f56591b342fef3573b5df43163f752f69985142593d9a26934fabf5ce8fbb96"
 PROCESSORS = "miles/backends/megatron_utils/megatron_to_hf/processors"
 ACTOR = "miles/backends/megatron_utils/actor.py"
 
