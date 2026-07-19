@@ -29,7 +29,7 @@ index 879b689c8..230e50630 100644
 
  try:
 diff --git a/miles/backends/megatron_utils/actor.py b/miles/backends/megatron_utils/actor.py
-index 54ca4b81a..e9cccce7b 100644
+index 54ca4b81a..80e459c7e 100644
 --- a/miles/backends/megatron_utils/actor.py
 +++ b/miles/backends/megatron_utils/actor.py
 @@ -39,8 +39,7 @@ from .parallel import verify_megatron_parallel_state
@@ -59,7 +59,36 @@ index 54ca4b81a..e9cccce7b 100644
              update_weight_cls = UpdateWeightFromTensor
          else:
              if self.args.update_weight_transfer_mode == "broadcast":
-@@ -598,7 +598,7 @@ class MegatronTrainRayActor(TrainRayActor):
+@@ -532,4 +532,27 @@ class MegatronTrainRayActor(TrainRayActor):
++        weight_update_session_started = False
++        if dist.get_rank() == 0:
++            try:
++                ray.get([engine.begin_weight_update.remote(selector="target") for engine in rollout_engines])
++            except Exception:
++                try:
++                    ray.get([engine.end_weight_update.remote() for engine in rollout_engines])
++                except Exception:
++                    logger.exception("Failed to close SGLang weight-update session")
++                raise
++            weight_update_session_started = True
++
+         with torch_memory_saver.disable() if self.args.offload_train else nullcontext():
+             print_memory("before update_weights")
+-            self.weight_updater.update_weights()
++            try:
++                self.weight_updater.update_weights()
++            except Exception:
++                if weight_update_session_started:
++                    try:
++                        ray.get([engine.end_weight_update.remote() for engine in rollout_engines])
++                    except Exception:
++                        logger.exception("Failed to close SGLang weight-update session")
++                raise
++            else:
++                if weight_update_session_started:
++                    ray.get([engine.end_weight_update.remote() for engine in rollout_engines])
+             print_memory("after update_weights")
+@@ -598,7 +621,7 @@ class MegatronTrainRayActor(TrainRayActor):
          group_name = "actor_critic"
          world_size = 2
          self._actor_critic_groups = init_process_group(
@@ -271,7 +300,7 @@ index 51afedac4..13c3bb612 100644
          world_size=world_size,
          rank=0,
 diff --git a/miles/backends/sglang_utils/sglang_engine.py b/miles/backends/sglang_utils/sglang_engine.py
-index ee76b3872..85e0b295c 100644
+index ee76b3872..4888359ee 100644
 --- a/miles/backends/sglang_utils/sglang_engine.py
 +++ b/miles/backends/sglang_utils/sglang_engine.py
 @@ -7,13 +7,9 @@ import time
@@ -357,7 +386,16 @@ index ee76b3872..85e0b295c 100644
          logger.info(f"Shutdown engine {self.server_host}:{self.server_port}...")
          if self.node_rank == 0:
              worker_url = f"http://{self.server_host}:{self.server_port}"
-@@ -601,6 +621,14 @@ def _compute_server_args(
+@@ -451,2 +471,8 @@ class SGLangEngine(RayActor):
++    def begin_weight_update(self, selector: str = "target"):
++        return self._make_request("begin_weight_update", {"selector": selector})
++
++    def end_weight_update(self):
++        return self._make_request("end_weight_update", {})
++
+     def update_weights_from_disk(self, model_path: str, load_format: str | None = None):
+         """Reload weights from *model_path* without restarting the engine.
+@@ -601,6 +627,14 @@ def _compute_server_args(
      sglang_overrides: dict | None = None,
      num_gpus_per_engine: int | None = None,
  ):
