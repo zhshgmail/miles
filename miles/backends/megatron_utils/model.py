@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import dataclasses
 import gc
+import json
 import logging
 import math
+import os
+import stat
 from argparse import Namespace
 from collections.abc import Callable, Sequence
 from functools import partial
@@ -53,6 +56,39 @@ from .model_provider import get_model_provider_func
 from .parallel import get_packed_seq_params
 
 logger = logging.getLogger(__name__)
+
+
+def _emit_autoport_train_metric(log_dict: dict[str, float]) -> None:
+    evidence_path = os.environ.get("AUTOPORT_MILES_TRAIN_EVIDENCE_PATH")
+    if evidence_path is None:
+        return
+    if not os.path.isabs(evidence_path):
+        raise ValueError("autoport train evidence path must be absolute")
+    if (
+        not log_dict
+        or "train/grad_norm" not in log_dict
+        or "train/step" not in log_dict
+        or any(type(key) is not str or not key.startswith("train/") for key in log_dict)
+        or any(
+            type(value) not in (int, float) or not math.isfinite(float(value))
+            for value in log_dict.values()
+        )
+    ):
+        raise ValueError("autoport train evidence metrics are invalid")
+    encoded = (
+        json.dumps(log_dict, sort_keys=True, separators=(",", ":")) + "\n"
+    ).encode()
+    descriptor = os.open(
+        evidence_path, os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW
+    )
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ValueError("autoport train evidence path must be a regular file")
+        if os.write(descriptor, encoded) != len(encoded):
+            raise OSError("short write to autoport train evidence file")
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 from .bridge_lora_helpers import _ensure_model_list, _setup_lora_model_via_bridge  # noqa: F401
@@ -755,6 +791,7 @@ def train(
                 extra_metrics=extra_metrics,
                 should_log=True,
             )
+            _emit_autoport_train_metric(log_dict)
 
             if args.ci_test and not args.ci_disable_kl_checker:
                 check_kl(args, log_dict, step_id, accumulated_step_id)
