@@ -50,7 +50,7 @@ def _emit_autoport_weight_transfer(
     ):
         raise ValueError("weight bucket shape or values are invalid")
     print(
-        "AUTOPORT_MILES_WEIGHT_TRANSFER",
+        "AUTO_PORT_WEIGHT_BUCKET",
         json.dumps(
             {
                 "byte_count": byte_count,
