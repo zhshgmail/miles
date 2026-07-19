@@ -669,6 +669,16 @@ index a4145ca27..33340323e 100644
 
 
  class TrainRayActor(RayActor):
+diff --git a/miles/rollout/sglang_rollout.py b/miles/rollout/sglang_rollout.py
+index 461ebdf3..04e4a405 100644
+--- a/miles/rollout/sglang_rollout.py
++++ b/miles/rollout/sglang_rollout.py
+@@ -338,3 +338,4 @@ async def abort(args: Namespace, rollout_id: int) -> list[list[Sample]]:
+     state.aborted = True
+-
++    if args.rollout_external and not state.pendings:
++        return aborted_samples
+     if parse(sglang_router.__version__) <= parse("0.2.1") or args.use_miles_router:
 diff --git a/miles/utils/arguments.py b/miles/utils/arguments.py
 index abfa137ac..6a8fa666d 100644
 --- a/miles/utils/arguments.py
