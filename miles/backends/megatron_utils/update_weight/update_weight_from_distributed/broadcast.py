@@ -1,7 +1,9 @@
 import hashlib
 import json
 import math
+import os
 import socket
+import stat
 import time
 from argparse import Namespace
 from collections.abc import Callable, Mapping, Sequence
@@ -26,6 +28,11 @@ def _emit_autoport_weight_transfer(
     *,
     weight_version: int,
 ) -> None:
+    evidence_path = os.environ.get("AUTOPORT_MILES_WEIGHT_EVIDENCE_PATH")
+    if evidence_path is None:
+        return
+    if not os.path.isabs(evidence_path):
+        raise ValueError("autoport weight evidence path must be absolute")
     names = [name for name, _tensor in converted_named_tensors]
     sample_values = {
         name: tensor.detach().reshape(-1)[:4].float().cpu().tolist()
@@ -49,23 +56,27 @@ def _emit_autoport_weight_transfer(
         )
     ):
         raise ValueError("weight bucket shape or values are invalid")
-    print(
-        "AUTO_PORT_WEIGHT_BUCKET",
-        json.dumps(
-            {
-                "byte_count": byte_count,
-                "name_digest": hashlib.sha256(
-                    "\0".join(names).encode("utf-8")
-                ).hexdigest(),
-                "names": names,
-                "sample_values": sample_values,
-                "tensor_count": tensor_count,
-                "weight_version": weight_version,
-            },
-            sort_keys=True,
-        ),
-        flush=True,
-    )
+    payload = {
+        "byte_count": byte_count,
+        "name_digest": hashlib.sha256("\0".join(names).encode("utf-8")).hexdigest(),
+        "names": names,
+        "sample_values": sample_values,
+        "tensor_count": tensor_count,
+        "weight_version": weight_version,
+    }
+    flags = os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW
+    descriptor = os.open(evidence_path, flags)
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ValueError("autoport weight evidence path must be a regular file")
+        encoded = (
+            json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n"
+        ).encode()
+        if os.write(descriptor, encoded) != len(encoded):
+            raise OSError("short write to autoport weight evidence file")
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 class UpdateWeightFromDistributed(DistBucketedWeightUpdateMixin):
