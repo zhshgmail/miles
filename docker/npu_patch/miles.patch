@@ -300,7 +300,7 @@ index 51afedac4..13c3bb612 100644
          world_size=world_size,
          rank=0,
 diff --git a/miles/backends/sglang_utils/sglang_engine.py b/miles/backends/sglang_utils/sglang_engine.py
-index ee76b3872..4888359ee 100644
+index ee76b3872..265233322 100644
 --- a/miles/backends/sglang_utils/sglang_engine.py
 +++ b/miles/backends/sglang_utils/sglang_engine.py
 @@ -7,13 +7,9 @@ import time
@@ -386,16 +386,31 @@ index ee76b3872..4888359ee 100644
          logger.info(f"Shutdown engine {self.server_host}:{self.server_port}...")
          if self.node_rank == 0:
              worker_url = f"http://{self.server_host}:{self.server_port}"
-@@ -451,2 +471,8 @@ class SGLangEngine(RayActor):
+@@ -451,2 +471,14 @@ class SGLangEngine(RayActor):
 +    def begin_weight_update(self, selector: str = "target"):
-+        return self._make_request("begin_weight_update", {"selector": selector})
++        response = self._make_request("begin_weight_update", {"selector": selector})
++        self._weight_update_session_active = True
++        return response
 +
 +    def end_weight_update(self):
-+        return self._make_request("end_weight_update", {})
++        if not getattr(self, "_weight_update_session_active", False):
++            return {"success": True, "message": "Weight-update session already closed"}
++        response = self._make_request("end_weight_update", {})
++        self._weight_update_session_active = False
++        return response
 +
      def update_weights_from_disk(self, model_path: str, load_format: str | None = None):
          """Reload weights from *model_path* without restarting the engine.
-@@ -601,6 +627,14 @@ def _compute_server_args(
+@@ -529,2 +561,8 @@ class SGLangEngine(RayActor):
++        if getattr(self, "_weight_update_session_active", False):
++            if restore_weights_before_load:
++                return {"success": True, "message": "Weights restored by begin_weight_update"}
++            if post_process_quantization or post_load_weights:
++                return self.end_weight_update()
++
+         return self._make_request(
+             "post_process_weights",
+@@ -601,6 +639,14 @@ def _compute_server_args(
      sglang_overrides: dict | None = None,
      num_gpus_per_engine: int | None = None,
  ):

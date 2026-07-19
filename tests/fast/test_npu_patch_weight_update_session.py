@@ -49,9 +49,16 @@ def test_distributed_weight_update_uses_sglang_session_boundary(tmp_path):
     engine = (source / SGLANG_ENGINE).read_text(encoding="utf-8")
 
     assert 'def begin_weight_update(self, selector: str = "target")' in engine
-    assert 'return self._make_request("begin_weight_update", {"selector": selector})' in engine
+    assert 'self._make_request("begin_weight_update", {"selector": selector})' in engine
     assert "def end_weight_update(self)" in engine
-    assert 'return self._make_request("end_weight_update", {})' in engine
+    assert 'self._make_request("end_weight_update", {})' in engine
+    assert "self._weight_update_session_active = True" in engine
+    assert 'if not getattr(self, "_weight_update_session_active", False):' in engine
+
+    post_process = engine[engine.index("def post_process_weights(") : engine.index("def update_weight_version(")]
+    assert "if restore_weights_before_load:" in post_process
+    assert "return self.end_weight_update()" in post_process
+    assert post_process.index("return self.end_weight_update()") < post_process.index('"post_process_weights"')
 
     begin = actor.index("engine.begin_weight_update.remote")
     update = actor.index("self.weight_updater.update_weights()", begin)
