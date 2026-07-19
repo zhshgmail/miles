@@ -1,3 +1,6 @@
+import hashlib
+import json
+import math
 import socket
 import time
 from argparse import Namespace
@@ -16,6 +19,53 @@ from miles.utils.distributed_utils import init_process_group
 from miles.utils.lora import LORA_ADAPTER_NAME
 from ..common import _check_weight_sync_results
 from .mixin import DistBucketedWeightUpdateMixin
+
+
+def _emit_autoport_weight_transfer(
+    converted_named_tensors: Sequence[tuple[str, torch.Tensor]],
+    *,
+    weight_version: int,
+) -> None:
+    names = [name for name, _tensor in converted_named_tensors]
+    sample_values = {
+        name: tensor.detach().reshape(-1)[:4].float().cpu().tolist()
+        for name, tensor in converted_named_tensors
+    }
+    byte_count = sum(
+        tensor.numel() * tensor.element_size()
+        for _name, tensor in converted_named_tensors
+    )
+    tensor_count = len(converted_named_tensors)
+    if tensor_count == 0 or byte_count == 0:
+        return
+    if (
+        len(names) != len(set(names))
+        or any(type(name) is not str or not name for name in names)
+        or any(tensor.numel() <= 0 for _name, tensor in converted_named_tensors)
+        or any(
+            not math.isfinite(float(sample))
+            for samples in sample_values.values()
+            for sample in samples
+        )
+    ):
+        raise ValueError("weight bucket shape or values are invalid")
+    print(
+        "AUTOPORT_MILES_WEIGHT_TRANSFER",
+        json.dumps(
+            {
+                "byte_count": byte_count,
+                "name_digest": hashlib.sha256(
+                    "\0".join(names).encode("utf-8")
+                ).hexdigest(),
+                "names": names,
+                "sample_values": sample_values,
+                "tensor_count": tensor_count,
+                "weight_version": weight_version,
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
 
 
 class UpdateWeightFromDistributed(DistBucketedWeightUpdateMixin):
@@ -117,6 +167,9 @@ class UpdateWeightFromDistributed(DistBucketedWeightUpdateMixin):
             converted_named_tensors,
         )
         ray.get(refs)
+        _emit_autoport_weight_transfer(
+            converted_named_tensors, weight_version=self.weight_version
+        )
         converted_named_tensors.clear()
         ray.get(self.rollout_engine_lock.release.remote())
         if pbar:
