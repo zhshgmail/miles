@@ -19,7 +19,7 @@ training-patch replay.
 | TransformerEngineNPU | cecf4a2a3ea7f31afb85cc6669f6b18adc56e5bd | [Ascend TransformerEngineNPU](https://gitcode.com/ascend/TransformerEngineNPU) |
 | Megatron-Bridge | 07d61e1547a8356cc34928f7eb20226d2f9db3fa | [radixark Megatron-Bridge](https://github.com/radixark/Megatron-Bridge) |
 | mbridge | 89eb10887887bc74853f89a4de258c0702932a1c (package 0.15.1) | [ISEEKYAN mbridge](https://github.com/ISEEKYAN/mbridge) |
-| Miles | 551d15914c89b1229b76fe806ca5f5aa5a826309 | [radixark Miles](https://github.com/radixark/miles) |
+| Miles | b8649e6cd2a5772ec7461baa22d6cdb42b9f5564 | [radixark Miles](https://github.com/radixark/miles) |
 | NVIDIA ModelOpt | 0.43.0 | [NVIDIA ModelOpt](https://github.com/NVIDIA/TensorRT-Model-Optimizer) |
 | OmegaConf | 2.3.0 | [OmegaConf](https://github.com/omry/omegaconf) |
 | datasets | >=2.20,<5 | [Hugging Face datasets](https://github.com/huggingface/datasets) |
@@ -103,11 +103,11 @@ detached at that commit, and verify every patch by content digest. Do not copy
 a patch directory from the Miles source checkout or select a mutable branch:
 
     PATCH_BUNDLE_REPOSITORY=https://github.com/zhshgmail/miles.git
-    PATCH_BUNDLE_COMMIT=a040a89dc36da2b9fcd6e05c989e9675a508005a
+    PATCH_BUNDLE_COMMIT=fa1efb724016b3cf6b718065a7ef05a6277408c3
     PATCH_BUNDLE_CHECKOUT="$PWD/miles-option-b-patch-bundle-$PATCH_BUNDLE_COMMIT"
     test ! -e "$PATCH_BUNDLE_CHECKOUT"
     git clone --no-checkout "$PATCH_BUNDLE_REPOSITORY" "$PATCH_BUNDLE_CHECKOUT"
-    git -C "$PATCH_BUNDLE_CHECKOUT" checkout --detach a040a89dc36da2b9fcd6e05c989e9675a508005a
+    git -C "$PATCH_BUNDLE_CHECKOUT" checkout --detach fa1efb724016b3cf6b718065a7ef05a6277408c3
     test "$(git -C "$PATCH_BUNDLE_CHECKOUT" rev-parse HEAD)" = "$PATCH_BUNDLE_COMMIT"
     ! git -C "$PATCH_BUNDLE_CHECKOUT" symbolic-ref -q HEAD
     export PATCH_BUNDLE_DIR="$PATCH_BUNDLE_CHECKOUT/docker/npu_patch"
@@ -115,7 +115,7 @@ a patch directory from the Miles source checkout or select a mutable branch:
     (
       cd "$PATCH_BUNDLE_DIR"
       sha256sum --check <<'EOF'
-    0f56591b342fef3573b5df43163f752f69985142593d9a26934fabf5ce8fbb96  miles.patch
+    71804b61f54452dcd2c421369d9444a0ca0698733161d41340982fa339f17721  miles.patch
     36f027c5e1ec3dc1d05f3fe3fdd32d15df203e45063b20736955ea1d30faab22  megatron.patch
     801a7d07b43249fe76a9dbfb961565138088fb03e0efb9b237225534bfc02162  megatron_bridge.patch
     d014bba43071c2190d113706a0ca789d567eb3d8b26a123bd71a7866bc0e84f3  sglang.patch
@@ -142,7 +142,7 @@ Prepare immutable source checkouts independently of the patch artifact:
     git -C mbridge checkout --detach 89eb10887887bc74853f89a4de258c0702932a1c
 
     git clone https://github.com/radixark/miles.git
-    git -C miles checkout --detach 551d15914c89b1229b76fe806ca5f5aa5a826309
+    git -C miles checkout --detach b8649e6cd2a5772ec7461baa22d6cdb42b9f5564
 
 Install in dependency order without build isolation or dependency resolution;
 the build/test imports were installed in the constrained base step:
@@ -228,10 +228,13 @@ Mcore in every direct Megatron process entry. There is no supported
 repatch(args) replacement, and the patch does not disable torch.compile. It
 uses Mcore 0.17's tokenizer padding helper and defers Ray import to the custom
 model-provider branch, so weight-conversion module import does not require the
-rollout stack. The Mcore patch contains only the NPU tensor-type compatibility
-gap and its focused test. The Bridge patch executes AutoMapping classification
-for standard Mcore TE identities and adapts Mcore 0.17's replicated
-uneven-DTensor gather back to the plain full tensor expected by Bridge export.
+rollout stack. Its dumper integration defers the optional SGLang dumper import
+while retaining the target source's phase/override configuration and model
+gradient-coverage logging. The Mcore patch contains only the NPU tensor-type
+compatibility gap and its focused test. The Bridge patch executes AutoMapping
+classification for standard Mcore TE identities and adapts Mcore 0.17's
+replicated uneven-DTensor gather back to the plain full tensor expected by
+Bridge export.
 
 ## Focused Patch Tests
 
