@@ -851,7 +851,7 @@ index 359a51c1d..823967301 100644
      args.hf_checkpoint = str(args.script_hf_checkpoint)
      args.__dict__.setdefault("megatron_to_hf_mode", "raw")
 diff --git a/miles/utils/dumper_utils.py b/miles/utils/dumper_utils.py
-index 2d1489975..aad969501 100644
+index aea925aa6..292c3d486 100644
 --- a/miles/utils/dumper_utils.py
 +++ b/miles/utils/dumper_utils.py
 @@ -12,11 +12,15 @@ from typing import Any
@@ -872,23 +872,23 @@ index 2d1489975..aad969501 100644
  class DumperPhase(enum.Enum):
      INFERENCE = "inference"
      FWD_ONLY = "fwd_only"
-@@ -72,6 +76,7 @@ class DumperMegatronUtil:
-     def __init__(self, args: Namespace, model: Sequence[torch.nn.Module], phase: DumperPhase) -> None:
-         self.enabled = self._configure(args, phase)
+@@ -83,6 +87,7 @@ class DumperMegatronUtil:
+         self.overrides = _get_phase_override_configs(args, phase)
+         self.enabled = self._configure(args, phase, self.overrides)
          if self.enabled:
 +            _, _, dumper = _dumper_api()
              dumper.register_non_intrusive_dumper(self._extract_model(model))
 
      def wrap_forward_step(self, forward_step_func: Callable) -> Callable:
-@@ -84,6 +89,7 @@ class DumperMegatronUtil:
-         if not self.enabled:
-             return
+@@ -99,6 +104,7 @@ class DumperMegatronUtil:
+         if self.phase is DumperPhase.FWD_BWD and self.overrides.get("enable_model_grad"):
+             _log_model_grad_coverage(extracted_model)
 
 +        _, _, dumper = _dumper_api()
-         dumper.dump_model(self._extract_model(model))
+         dumper.dump_model(extracted_model)
          dumper.step()
          dumper.configure(enable=False)
-@@ -107,6 +113,7 @@ class DumperMegatronUtil:
+@@ -123,6 +129,7 @@ class DumperMegatronUtil:
              **overrides,
          }
 
@@ -896,7 +896,15 @@ index 2d1489975..aad969501 100644
          full_config = DumperConfig(**merged)
          dumper.reset()
          _cleanup_dump_dir(Path(merged["dir"]) / merged["exp_name"])
-@@ -120,6 +127,7 @@ def _wrap_forward_step_with_stepping(forward_step_func: Callable) -> Callable:
+@@ -146,6 +153,7 @@ def _log_model_grad_coverage(model: torch.nn.Module) -> None:
+         else:
+             with_grad += 1
+
++    _, _get_rank, _ = _dumper_api()
+     rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else _get_rank()
+     logger.info(
+         "Dumper fwd_bwd model grad coverage rank=%s with_grad=%d total=%d missing=%d missing_names=%s",
+@@ -163,6 +171,7 @@ def _wrap_forward_step_with_stepping(forward_step_func: Callable) -> Callable:
      def _wrapped(*args: Any, **kwargs: Any) -> Any:
          nonlocal is_first_call
          if not is_first_call:
@@ -904,7 +912,7 @@ index 2d1489975..aad969501 100644
              dumper.step()
          is_first_call = False
          return forward_step_func(*args, **kwargs)
-@@ -131,6 +139,7 @@ def _wrap_forward_step_with_stepping(forward_step_func: Callable) -> Callable:
+@@ -174,6 +183,7 @@ def _wrap_forward_step_with_stepping(forward_step_func: Callable) -> Callable:
 
 
  def _cleanup_dump_dir(dump_dir: Path) -> None:
@@ -912,7 +920,7 @@ index 2d1489975..aad969501 100644
      if _get_rank() == 0 and dump_dir.is_dir():
          shutil.rmtree(dump_dir)
      if dist.is_initialized():
-@@ -138,6 +147,9 @@ def _cleanup_dump_dir(dump_dir: Path) -> None:
+@@ -181,6 +191,9 @@ def _cleanup_dump_dir(dump_dir: Path) -> None:
 
 
  def _get_phase_override_configs(args: Namespace, phase: DumperPhase) -> dict[str, Any]:
