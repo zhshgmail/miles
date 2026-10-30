@@ -1,3 +1,4 @@
+from miles.platforms import current_platform
 import logging
 import os
 from contextlib import contextmanager, nullcontext
@@ -265,10 +266,10 @@ class FSDPTrainRayActor(TorchNativeTrainRayActor):
 
         # Rank 0: move with weights, others: allocate empty tensors on device
         if dist.get_rank() == 0:
-            model = model.to(device=torch.cuda.current_device(), non_blocking=True)
+            model = model.to(device=current_platform.current_device(), non_blocking=True)
         else:
             # to_empty creates tensors on device without initializing memory
-            model = model.to_empty(device=torch.cuda.current_device())
+            model = model.to_empty(device=current_platform.current_device())
 
         is_cpu_offload = cpu_offload is not None
         options = StateDictOptions(full_state_dict=True, cpu_offload=is_cpu_offload, broadcast_from_rank0=True)
@@ -282,7 +283,7 @@ class FSDPTrainRayActor(TorchNativeTrainRayActor):
         if is_cpu_offload:
             model.to("cpu", non_blocking=True)
             for buf in model.buffers():
-                buf.data = buf.data.to(torch.cuda.current_device())
+                buf.data = buf.data.to(current_platform.current_device())
 
         return model
 
@@ -297,16 +298,16 @@ class FSDPTrainRayActor(TorchNativeTrainRayActor):
 
         if not self.fsdp_cpu_offload:
             self.model.cpu()
-            torch.cuda.empty_cache()
+            torch.accelerator.empty_cache()
             dist.barrier(group=get_gloo_group())
         self.ref_model.eval()
         try:
             yield
         finally:
-            torch.cuda.empty_cache()
+            torch.accelerator.empty_cache()
             dist.barrier(group=get_gloo_group())
             if not self.fsdp_cpu_offload:
-                self.model.cuda()
+                self.model.to(current_platform.current_device())
                 dist.barrier(group=get_gloo_group())
 
     def _logprob_forward(self, model: torch.nn.Module, batch: dict) -> torch.Tensor:

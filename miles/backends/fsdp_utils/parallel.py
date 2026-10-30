@@ -1,3 +1,4 @@
+from miles.platforms import current_platform
 import logging
 from argparse import Namespace
 
@@ -49,7 +50,7 @@ def create_fsdp_parallel_state(args: Namespace) -> ParallelState:
     rank = dist.get_rank()
 
     meshes = build_fsdp_meshes(
-        device_type="cuda",
+        device_type=current_platform.device_type,
         world_size=world_size,
         dp_replicate_size=args.dp_replicate_size,
     )

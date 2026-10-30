@@ -65,6 +65,9 @@ def get_local_gpu_id():
     if CELL_INDEX_ENV_VAR in os.environ:
         return read_worker_in_pod_index(os.environ)
 
+    if current_platform.device_type == "npu":
+        return current_platform.local_device_id(current_platform.assigned_ids()[0])
+
     cvd = os.environ.get("CUDA_VISIBLE_DEVICES") or os.environ.get("HIP_VISIBLE_DEVICES")
     if not cvd:
         return ray.get_gpu_ids()[0]
@@ -165,7 +168,7 @@ class TrainRayActor(NodeProbeMixin):
         backend = args.distributed_backend
         if getattr(args, "fsdp_cpu_offload", False) and getattr(args, "fsdp_cpu_backend", None):
             cpu_backend = args.fsdp_cpu_backend
-            backend = f"cpu:{cpu_backend},cuda:{args.distributed_backend}"
+            backend = f"cpu:{cpu_backend},{current_platform.device_type}:{args.distributed_backend}"
             logger.info(f"FSDP CPU offload enabled, using hybrid backend: {backend}")
 
         dist.init_process_group(

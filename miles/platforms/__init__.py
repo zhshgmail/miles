@@ -13,6 +13,18 @@ class Platform:
     """CUDA, and the base other platforms override: every method is the call main makes on CUDA."""
 
     device_type = "cuda"
+    distributed_backend = "nccl"
+    ray_resource = "GPU"
+
+    def ray_options(self, count):
+        return {"num_gpus": count}
+
+    def assigned_ids(self):
+        import ray
+        return ray.get_gpu_ids()
+
+    def ray_start_args(self, count):
+        return f"--num-gpus {count}"
     # torch.compile(dynamic=True) works here; a platform without it runs dynamic-shape helpers eager
     dynamic_shapes = True
     # NVML sees the devices, so each training rank is pinned to its GPU's NUMA node
@@ -37,12 +49,16 @@ def _select_platform() -> Platform:
     device_type = os.environ.get("MILES_ACCELERATOR", "cuda")
     if device_type == "cuda":
         return Platform()
+    if device_type == "npu":
+        from miles.platforms.npu import NpuPlatform
+
+        return NpuPlatform()
     if device_type == "tpu":
         # imports torch_tpu, which CUDA processes never load
         from miles.platforms.tpu import TpuPlatform
 
         return TpuPlatform()
-    raise ValueError(f"MILES_ACCELERATOR={device_type!r}; expected cuda or tpu")
+    raise ValueError(f"MILES_ACCELERATOR={device_type!r}; expected cuda, tpu or npu")
 
 
 current_platform = _select_platform()

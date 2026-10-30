@@ -1,3 +1,4 @@
+from miles.platforms import current_platform
 import os
 import shlex
 
@@ -45,7 +46,7 @@ class RayCommandBackend(BaseCommandBackend):
             self.exec_command_cpu(
                 # will prevent ray from buffering stdout/stderr
                 f"export PYTHONUNBUFFERED=1 && "
-                f"ray start --head --node-ip-address {master_addr} --num-gpus {request.num_gpus_per_node} --disable-usage-stats"
+                f"ray start --head --node-ip-address {master_addr} {current_platform.ray_start_args(request.num_gpus_per_node)} --disable-usage-stats"
             )
 
         if mooncake_master_port is not None:

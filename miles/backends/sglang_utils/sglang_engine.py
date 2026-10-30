@@ -207,7 +207,7 @@ def _compute_server_args(
             kwargs["max_loaded_loras"] = 2 * kwargs["max_loras_per_batch"]
 
     if kwargs.get("device") is None:
-        kwargs["device"] = "cuda"
+        kwargs["device"] = "npu" if os.environ.get("MILES_ACCELERATOR") == "npu" else "cuda"
 
     return kwargs
 

@@ -1,3 +1,4 @@
+from miles.platforms import current_platform
 import argparse
 import json
 import logging
@@ -458,7 +459,7 @@ def get_miles_extra_args_provider(add_custom_arguments=None):
                 ),
             )
 
-            reset_arg(parser, "--distributed-backend", type=str, default="nccl")
+            reset_arg(parser, "--distributed-backend", type=str, default=current_platform.distributed_backend)
             reset_arg(parser, "--distributed-timeout-minutes", type=int, default=10)
 
             return parser

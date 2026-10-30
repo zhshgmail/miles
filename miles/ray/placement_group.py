@@ -1,3 +1,4 @@
+from miles.platforms import current_platform
 import asyncio
 import logging
 import socket
@@ -55,10 +56,10 @@ from miles.utils.workers.worker_provider.static import wait_static_addrs_ready
 logger = logging.getLogger(__name__)
 
 
-@ray.remote(num_gpus=1)
+@ray.remote(**current_platform.ray_options(1))
 class InfoActor:
     def get_ip_and_gpu_id(self):
-        return ray.util.get_node_ip_address(), ray.get_gpu_ids()[0]
+        return ray.util.get_node_ip_address(), current_platform.assigned_ids()[0]
 
 
 def sort_key(x):
@@ -93,7 +94,7 @@ def _create_placement_group(num_gpus) -> PlacementGroupInfo:
     if num_gpus == 0:
         return None, [], []
 
-    bundles = [{"GPU": 1, "CPU": 1} for _ in range(num_gpus)]
+    bundles = [{current_platform.ray_resource: 1, "CPU": 1} for _ in range(num_gpus)]
     pg = placement_group(bundles, strategy="PACK")
     num_bundles = len(bundles)
 

@@ -148,6 +148,10 @@ def get_gpu_uuids(gpu_ids: list[int]) -> list[str | None]:
 
 
 def _to_local_gpu_id(physical_gpu_id: int) -> int:
+    if os.environ.get("MILES_ACCELERATOR") == "npu":
+        from miles.platforms import current_platform
+        return current_platform.local_device_id(physical_gpu_id)
+
     cvd = os.environ.get("CUDA_VISIBLE_DEVICES") or os.environ.get("HIP_VISIBLE_DEVICES")
     if not cvd:
         return physical_gpu_id  # no remapping

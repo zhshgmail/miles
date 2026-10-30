@@ -53,6 +53,7 @@ def train_env_vars(
     return {
         # exported for the submitting client too, but only the runtime env reaches the ray workers
         "PYTHONUNBUFFERED": "1",
+        **({"MILES_ACCELERATOR": os.environ["MILES_ACCELERATOR"]} if "MILES_ACCELERATOR" in os.environ else {}),
         # If setting this in FSDP, the computation communication overlapping may have issues
         **(
             {}

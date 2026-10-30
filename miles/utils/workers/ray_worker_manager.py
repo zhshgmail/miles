@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from miles.platforms import current_platform
+
 import asyncio
 import functools
 import logging
@@ -390,7 +392,7 @@ class _BaseActorManager(Generic[SpecT]):
 
         return remote_class.options(
             num_cpus=self.spec.scheduling.num_cpus_per_worker,
-            num_gpus=self.spec.scheduling.num_gpus_per_worker,
+            **current_platform.ray_options(self.spec.scheduling.num_gpus_per_worker),
             **(dict(scheduling_strategy=s) if (s := scheduling_strategy) is not None else {}),
             runtime_env={"env_vars": self.spec.env_var(self.launch_context)},
             **(compute_ray_pin_head_options() if self.spec.scheduling.pin_to_head else {}),
