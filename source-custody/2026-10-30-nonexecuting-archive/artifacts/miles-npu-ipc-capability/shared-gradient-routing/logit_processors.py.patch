@@ -1,0 +1,40 @@
+--- autoport-evidence/miles-integrated-source311-20261023/lead/prepared-r2/source/miles/backends/training_utils/loss/hub/logit_processors.py
++++ miles/backends/training_utils/loss/hub/logit_processors.py
+@@ -2,6 +2,8 @@
+ from collections.abc import Iterator, Sequence
+ 
+ import torch
++
++from miles import platforms
+ 
+ from miles.backends.training_utils.data.context_parallel import (
+     LocalResponseRows,
+@@ -101,6 +103,28 @@
+             logits = logits.to(torch.bfloat16)
+         elif getattr(args, "fp16", False):
+             logits = logits.to(torch.float16)
++
++    if platforms.current_platform.device_type == "npu" and not args.true_on_policy_mode:
++        # A shared split routes all response gradients through one parent. A
++        # separate slice per response zeros a full microbatch-sized gradient
++        # for every response before accumulation, including prompt rows.
++        layout = list(layout)
++        boundaries = sorted({0, logits.size(0)} | {
++            endpoint for row_ranges, _, _ in layout
++            for row_range in row_ranges for endpoint in row_range
++        })
++        lengths = [end - start for start, end in zip(boundaries, boundaries[1:])]
++        # Keep a connected empty view for ranks/samples without response rows.
++        partitions = logits.split(lengths + [0], dim=0)
++        boundary_index = {row: index for index, row in enumerate(boundaries)}
++        for row_ranges, tokens_chunk, response_indices in layout:
++            pieces = []
++            for row_start, row_end in row_ranges:
++                pieces.extend(partitions[boundary_index[row_start]:boundary_index[row_end]])
++            logits_chunk = (pieces[0] if len(pieces) == 1 else
++                            torch.cat(pieces, dim=0) if pieces else partitions[-1])
++            yield logits_chunk, tokens_chunk, response_indices
++        return
+ 
+     for row_ranges, tokens_chunk, response_indices in layout:
+         pieces = [logits[row_start:row_end] for row_start, row_end in row_ranges]

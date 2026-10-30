@@ -1,0 +1,13 @@
+--- a/miles/backends/training_utils/loss/hub/math_utils.py
++++ b/miles/backends/training_utils/loss/hub/math_utils.py
+@@ -9,6 +9,10 @@
+ import torch.nn.functional as F
+ 
+ from miles import platforms
++
++# AP544 explicit diagnostic bootstrap; original compiled mathematics is unchanged.
++from miles.utils.index_observer544 import install as _install_index_observer544
++_install_index_observer544()
+ from miles.backends.training_utils.data.context_parallel import (
+     all_gather_with_cp,
+     slice_log_prob_with_cp,

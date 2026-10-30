@@ -1,0 +1,23 @@
+--- autoport-evidence/full-miles403-ipc-20261024T0029Z/ce-capacity512/candidate/math_utils.py
++++ miles/backends/training_utils/loss/hub/math_utils.py
+@@ -996,13 +996,16 @@
+         return empty, empty if with_entropy else None
+ 
+     log_probs, entropys = [], []
+-    for start in range(0, logits.size(0), tile_rows):
+-        stop = min(start + tile_rows, logits.size(0))
+-        valid_rows = stop - start
++    # One split parent concatenates tile gradients once. Independent slices
++    # would each allocate a full response-sized gradient during backward.
++    for tile_index, logits_chunk in enumerate(logits.split(tile_rows, dim=0)):
++        start = tile_index * tile_rows
++        stop = start + logits_chunk.size(0)
++        valid_rows = logits_chunk.size(0)
+         pad_rows = tile_rows - valid_rows
+         # F.pad also supplies owned storage for the full tile. Do not mutate the
+         # original selected tensor: CE/entropy retain their original upcast copies.
+-        tile = F.pad(logits[start:stop], (0, 0, 0, pad_rows), value=0).contiguous()
++        tile = F.pad(logits_chunk, (0, 0, 0, pad_rows), value=0).contiguous()
+         tile_tokens = F.pad(tokens[start:stop], (0, pad_rows), value=0).contiguous()
+         tile_mask = None
+         if sampling_mask is not None:

@@ -1,0 +1,16 @@
+--- a/run_full_case.sh
++++ b/run_full_case.sh
+@@ -27,6 +27,13 @@
+ export MILES_SCRIPT_RUN_ID=miles-full326 MILES_SCRIPT_RAY_SUBMISSION_ID=miles-full326
+ export MASTER_ADDR=127.0.0.1 NCCL_NVLS_ENABLE=0
+ export TMPDIR=$SHORT RAY_TMPDIR=$SHORT XDG_CACHE_HOME=$RUN/cache
++# SGLang's cache API does not use XDG_CACHE_HOME for this default.
++export SGLANG_CACHE_DIR="$RUN/cache/sglang"
++# Original ExecuteTrainConfig.from_env -> train_env_vars -> Ray runtime_env.
++# Do not silently replace an existing explicit runtime environment declaration.
++[[ -z "${MILES_SCRIPT_EXTRA_ENV_VARS:-}" ]]
++export MILES_SCRIPT_EXTRA_ENV_VARS="{\"SGLANG_CACHE_DIR\":\"$SGLANG_CACHE_DIR\"}"
++mkdir -p "$SGLANG_CACHE_DIR"
+ export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1
+ export ASCEND_PROCESS_LOG_PATH=$RUN/plog
+ unset WANDB_API_KEY http_proxy https_proxy HTTP_PROXY HTTPS_PROXY RAY_ADDRESS

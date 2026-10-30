@@ -1,0 +1,132 @@
+{
+  "schema": "autoport.nonexecuting-source-archive/1",
+  "dependency": "miles",
+  "actualUpstream": "https://github.com/radixark/miles.git",
+  "ownedFork": "https://github.com/zhshgmail/miles.git",
+  "archivalBranchOnly": true,
+  "patchApplied": false,
+  "originalRuntimeSourceChanged": false,
+  "runtimeQualificationClaimed": false,
+  "noSourceBaseSubstitution": true,
+  "sourceArtifacts": [
+    {
+      "source": "docs/examples/miles-sglang-cache/cache-entry.patch",
+      "productCommit": "aa04e0bb85591dca879379a21df3f6fb64558917",
+      "productBlob": "9bee740acb9d534d03e479376f15a3af5ea32315",
+      "sha256": "226d1b78a484a3b44e2a03b03fb981b2d881e563edca2e924ad484bdfefadbc5",
+      "bytes": 865,
+      "publicRepository": "https://gitcode.com/zhengshencn_hwca/npu-autoport-pipeline.git",
+      "workingBytesEqualCommit": true,
+      "knownPublishedProductCommit": "0a731b3a778dd7d6659a1cfbb99bba8af8bd42c3",
+      "knownPublishedProductBlob": "9bee740acb9d534d03e479376f15a3af5ea32315",
+      "knownPublishedBytesMatch": true
+    },
+    {
+      "source": "docs/examples/miles-npu-ipc-capability/shared-gradient-routing/logit_processors.py.patch",
+      "productCommit": "aa04e0bb85591dca879379a21df3f6fb64558917",
+      "productBlob": "b0f681ce5c8a1c739242e3c8a9702ce42be209b9",
+      "sha256": "019718a441a067bcacade24dcf4c9447b443cd5151272d377bc60759d08ce6d5",
+      "bytes": 2019,
+      "publicRepository": "https://gitcode.com/zhengshencn_hwca/npu-autoport-pipeline.git",
+      "workingBytesEqualCommit": true,
+      "knownPublishedProductCommit": "0a731b3a778dd7d6659a1cfbb99bba8af8bd42c3",
+      "knownPublishedProductBlob": "b0f681ce5c8a1c739242e3c8a9702ce42be209b9",
+      "knownPublishedBytesMatch": true
+    },
+    {
+      "source": "docs/examples/miles-npu-ipc-capability/shared-gradient-routing/math_utils.py.patch",
+      "productCommit": "aa04e0bb85591dca879379a21df3f6fb64558917",
+      "productBlob": "a6fad87df764b9c3478cf63d3169234faa1d4fe5",
+      "sha256": "afb72bdfb10b5ab490e6510d3f4aba32f4c0789a216988af88f2537626214ec4",
+      "bytes": 1294,
+      "publicRepository": "https://gitcode.com/zhengshencn_hwca/npu-autoport-pipeline.git",
+      "workingBytesEqualCommit": true,
+      "knownPublishedProductCommit": "0a731b3a778dd7d6659a1cfbb99bba8af8bd42c3",
+      "knownPublishedProductBlob": "a6fad87df764b9c3478cf63d3169234faa1d4fe5",
+      "knownPublishedBytesMatch": true
+    },
+    {
+      "source": "docs/examples/miles-npu-ipc-capability/shared-gradient-routing/index-observer/math_utils.py.patch",
+      "productCommit": "aa04e0bb85591dca879379a21df3f6fb64558917",
+      "productBlob": "90b064c74b73ede5fe671498d0ad6dbe95442966",
+      "sha256": "bd0c2e2ebb1ebb392f629661c116724d5c44068e2832ca3f0733b1ad62380676",
+      "bytes": 517,
+      "publicRepository": "https://gitcode.com/zhengshencn_hwca/npu-autoport-pipeline.git",
+      "workingBytesEqualCommit": true,
+      "knownPublishedProductCommit": "0a731b3a778dd7d6659a1cfbb99bba8af8bd42c3",
+      "knownPublishedProductBlob": "90b064c74b73ede5fe671498d0ad6dbe95442966",
+      "knownPublishedBytesMatch": true
+    },
+    {
+      "source": "docs/examples/miles-npu-ipc-capability/shared-gradient-routing/index-observer/index_observer544.py",
+      "productCommit": "aa04e0bb85591dca879379a21df3f6fb64558917",
+      "productBlob": "b8cc54ebd99174bd967b7a2a03b2bb09d6f24781",
+      "sha256": "a415e632072567923a966d4d7cb9d5e3240305af3e4e97df2fa5d1d8b3d15436",
+      "bytes": 10699,
+      "publicRepository": "https://gitcode.com/zhengshencn_hwca/npu-autoport-pipeline.git",
+      "workingBytesEqualCommit": true,
+      "knownPublishedProductCommit": "0a731b3a778dd7d6659a1cfbb99bba8af8bd42c3",
+      "knownPublishedProductBlob": "b8cc54ebd99174bd967b7a2a03b2bb09d6f24781",
+      "knownPublishedBytesMatch": true
+    },
+    {
+      "source": "docs/examples/miles-npu-ipc-capability/shared-gradient-routing/index-observer/capture_records.py",
+      "productCommit": "aa04e0bb85591dca879379a21df3f6fb64558917",
+      "productBlob": "60673e8812bfaedc61055b98b0d64ab6c98a0003",
+      "sha256": "9584d1e8f2852e9f3823954d3d2c9dc9f8eb1cac545bbb65dfd325cbd9671c53",
+      "bytes": 1833,
+      "publicRepository": "https://gitcode.com/zhengshencn_hwca/npu-autoport-pipeline.git",
+      "workingBytesEqualCommit": true,
+      "knownPublishedProductCommit": "0a731b3a778dd7d6659a1cfbb99bba8af8bd42c3",
+      "knownPublishedProductBlob": "60673e8812bfaedc61055b98b0d64ab6c98a0003",
+      "knownPublishedBytesMatch": true
+    }
+  ],
+  "sourceBindings": [
+    {
+      "target": "run_full_case.sh",
+      "artifact": "cache-entry.patch",
+      "before": "cff5d6b15cabae1d858f5f36778194cad1a0c24819bfb4ecb6d0b5a0fdf8ac56",
+      "after": "82e32a399f1125dec7c16655588173a005e430783356e200289400971a96f079",
+      "state": "Autoport launcher cache amendment, not Miles package source; NOT_APPLIED",
+      "originalConsumer": "Original Miles60rollout/eval20/GSM8K>=0.71 case launcher; historicalFAIL and costs retained"
+    },
+    {
+      "target": "miles/backends/training_utils/loss/hub/logit_processors.py",
+      "before": "3b5a776d92ce163550c4ffc1571eb7fcc0b74d9d7a812f5236c467b9900fdec7",
+      "after": "d10c93c4fe52c43635e8325816c9c375c5255f165fec0b0155904590e382630b",
+      "state": "Published shared-gradient patch; NOT_APPLIED",
+      "originalConsumer": "Original Miles logprob/backprop observed sequence; no new runtime qualification"
+    },
+    {
+      "target": "miles/backends/training_utils/loss/hub/math_utils.py",
+      "before": "725b156cc9c796927afffc057aacd0ec4fd2eeabf695cfc7edc11d95bb6f3cb5",
+      "after": "a52a318bfacd097d87f57c7db9c312d9f40978f3f27d2dd2c0509e0ba8e1aa6a",
+      "state": "Published fixed-row-capacity to shared-gradient source manifests; NOT_APPLIED",
+      "originalConsumer": "Original Miles compiled loss; inherited failures/UNKNOWN unchanged"
+    },
+    {
+      "target": "miles/backends/training_utils/loss/hub/math_utils.py",
+      "before": "a52a318bfacd097d87f57c7db9c312d9f40978f3f27d2dd2c0509e0ba8e1aa6a",
+      "after": "c6a5676f89483383971de0ef0ddd4012953a40760958804d34f240173f6b2264",
+      "state": "Published index-observer SOURCE_DELTA; NOT_APPLIED",
+      "originalConsumer": "Original generated producer/backward Index observation; observation not repair"
+    },
+    {
+      "target": "miles/utils/index_observer544.py",
+      "before": null,
+      "after": "a415e632072567923a966d4d7cb9d5e3240305af3e4e97df2fa5d1d8b3d15436",
+      "state": "Standalone published observer after-code archived, not installed/injected",
+      "originalConsumer": "Observer544 exact fingerprints/runtime guards retained; no broader normalization"
+    },
+    {
+      "target": "capture_records.py",
+      "before": "UNKNOWN; auxiliary published after-code only",
+      "after": "9584d1e8f2852e9f3823954d3d2c9dc9f8eb1cac545bbb65dfd325cbd9671c53",
+      "state": "Capture utility after-code, not invoked",
+      "originalConsumer": "Diagnostic record extraction only"
+    }
+  ],
+  "beforeAfterState": "Published source-pins retained; UNKNOWN stays UNKNOWN. Artifact bytes remotely preserved independently of source-base/history readiness.",
+  "originalAcceptance": "WholeSlime/MCoreTE0/2, original criteria/failures/cumulative168h preserved"
+}
